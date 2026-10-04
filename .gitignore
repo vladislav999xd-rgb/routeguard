@@ -1,0 +1,16 @@
+/config.php
+/.install.lock
+/storage/*
+!/storage/.gitkeep
+/*.zip
+/screenshots/*profile*/
+/FIX/backups/
+/FIX/.applied-*
+/.env
+/.env.*
+!/.env.example
+/.idea/
+/.vscode/
+.DS_Store
+Thumbs.db
+*.log

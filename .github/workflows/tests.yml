@@ -1,0 +1,44 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RG_DEV: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: mbstring, pdo_sqlite
+          coverage: none
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: PHP syntax
+        shell: bash
+        run: find . -type f -name '*.php' -not -path './FIX/backups/*' -print0 | xargs -0 -n1 php -l
+
+      - name: JavaScript syntax
+        run: node --check assets/app.js
+
+      - name: Route rules
+        run: php tests/smoke.php
+
+      - name: Call assistant
+        run: php tests/call_assistant.php

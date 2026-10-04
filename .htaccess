@@ -1,0 +1,16 @@
+Options -Indexes
+AddDefaultCharset UTF-8
+
+<FilesMatch "^(config(?:\.example)?\.php|schema(?:\.sqlite)?\.sql|\.install\.lock|composer\.(json|lock)|.*\.log|.*\.bak)$">
+    Require all denied
+</FilesMatch>
+
+RewriteEngine On
+RewriteRule ^(?:app|storage|tests|screenshots)/ - [F,L,NC]
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set Referrer-Policy "same-origin"
+    Header always set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+</IfModule>
