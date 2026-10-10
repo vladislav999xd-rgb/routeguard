@@ -4,6 +4,7 @@ declare(strict_types=1);
 const ROUTEGUARD_FIX_TOKEN = '__FIX_TOKEN__';
 const ROUTEGUARD_PAYLOAD_SHA256 = '__PAYLOAD_SHA256__';
 const ROUTEGUARD_PAYLOAD = '__PAYLOAD_BASE64__';
+const ROUTEGUARD_ENVIRONMENT_BASE64 = '__ENV_BASE64__';
 
 header('Content-Type: text/plain; charset=utf-8');
 @set_time_limit(0);
@@ -13,7 +14,13 @@ umask(0077);
 function routeguard_fail(string $message, int $status = 500): void
 {
     http_response_code($status);
-    exit("RouteGuard FIX: {$message}\n");
+    $output = "RouteGuard FIX: {$message}\n";
+    if (PHP_SAPI === 'cli' && defined('STDERR')) {
+        fwrite(STDERR, $output);
+    } else {
+        echo $output;
+    }
+    exit(1);
 }
 
 function routeguard_run(string $label, string $command, string $workingDirectory, bool $required = true): bool
@@ -148,6 +155,20 @@ if ($existingEnvironment !== null) {
     file_put_contents($environmentPath, $existingEnvironment, LOCK_EX);
     @chmod($environmentPath, 0600);
     echo "RouteGuard FIX: existing database settings preserved.\n";
+}
+if (!is_file($environmentPath)) {
+    $embeddedEnvironment = base64_decode(ROUTEGUARD_ENVIRONMENT_BASE64, true);
+    if ($embeddedEnvironment === false || $embeddedEnvironment === '') {
+        routeguard_fail('embedded environment settings are invalid.');
+    }
+    if (!is_dir($projectRoot) && !mkdir($projectRoot, 0700, true) && !is_dir($projectRoot)) {
+        routeguard_fail('cannot create routeguard_app for environment settings.');
+    }
+    if (file_put_contents($environmentPath, $embeddedEnvironment, LOCK_EX) === false) {
+        routeguard_fail('cannot restore routeguard_app/.env from the installer.');
+    }
+    @chmod($environmentPath, 0600);
+    echo "RouteGuard FIX: embedded database settings restored.\n";
 }
 if (!is_file($environmentPath)) routeguard_fail('routeguard_app/.env is missing. Rebuild the private release with database credentials.');
 if (getenv('ROUTEGUARD_SKIP_SETUP') === '1') {

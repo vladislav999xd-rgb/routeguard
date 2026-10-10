@@ -1,9 +1,10 @@
 param(
-    [Parameter(Mandatory = $true)][string]$DatabaseName,
-    [Parameter(Mandatory = $true)][string]$DatabaseUser,
-    [Parameter(Mandatory = $true)][string]$DatabasePassword,
+    [string]$DatabaseName,
+    [string]$DatabaseUser,
+    [string]$DatabasePassword,
     [string]$DatabaseHost = "localhost",
-    [string]$Domain = "irbitdp.ru"
+    [string]$Domain = "irbitdp.ru",
+    [switch]$ReuseExistingEnvironment
 )
 
 $ErrorActionPreference = "Stop"
@@ -21,6 +22,20 @@ $releaseRoot = Join-Path $projectRoot "release"
 $stageRoot = Join-Path $releaseRoot "staging"
 $payloadRoot = Join-Path $releaseRoot "payload"
 $archivePath = Join-Path $projectRoot "routeguard-v2-sprinthost.zip"
+$previousEnvironmentPath = Join-Path $stageRoot "routeguard_app\.env"
+$reusedEnvironment = $null
+
+if ($ReuseExistingEnvironment) {
+    if (-not (Test-Path -LiteralPath $previousEnvironmentPath -PathType Leaf)) {
+        throw "Cannot reuse database settings: previous release environment was not found."
+    }
+    $reusedEnvironment = [IO.File]::ReadAllText($previousEnvironmentPath, [Text.Encoding]::UTF8)
+    if (-not $reusedEnvironment.Contains("DATABASE_URL=")) {
+        throw "Cannot reuse database settings: previous environment is invalid."
+    }
+} elseif ([string]::IsNullOrWhiteSpace($DatabaseName) -or [string]::IsNullOrWhiteSpace($DatabaseUser) -or [string]::IsNullOrWhiteSpace($DatabasePassword)) {
+    throw "DatabaseName, DatabaseUser and DatabasePassword are required unless ReuseExistingEnvironment is specified."
+}
 
 foreach ($candidate in @($stageRoot, $payloadRoot)) {
     $absolute = [IO.Path]::GetFullPath($candidate)
@@ -57,8 +72,10 @@ Get-ChildItem -LiteralPath $appRoot -Directory -Recurse -Force | Where-Object Na
 $random = New-RouteGuardRandomBytes 48
 $secretKey = [Convert]::ToBase64String($random).Replace("+", "-").Replace("/", "_").TrimEnd("=")
 $fixToken = ConvertTo-RouteGuardHex (New-RouteGuardRandomBytes 24)
-$encodedPassword = [Uri]::EscapeDataString($DatabasePassword)
-$envText = @"
+$envText = $reusedEnvironment
+if ($null -eq $envText) {
+    $encodedPassword = [Uri]::EscapeDataString($DatabasePassword)
+    $envText = @"
 DJANGO_SECRET_KEY=$secretKey
 DJANGO_DEBUG=0
 DJANGO_ALLOWED_HOSTS=$Domain,www.$Domain
@@ -68,6 +85,7 @@ ROUTEGUARD_TIME_ZONE=Asia/Yekaterinburg
 ROUTEGUARD_DEMO_TTL_HOURS=168
 DJANGO_STATIC_ROOT=../public_html/static
 "@
+}
 [IO.File]::WriteAllText((Join-Path $appRoot ".env"), $envText, [Text.UTF8Encoding]::new($false))
 
 Copy-Item -LiteralPath $appRoot -Destination $payloadRoot -Recurse -Force
@@ -79,7 +97,8 @@ $payloadBytes = [IO.File]::ReadAllBytes($payloadZip)
 $payloadBase64 = [Convert]::ToBase64String($payloadBytes)
 $payloadHash = (Get-FileHash -LiteralPath $payloadZip -Algorithm SHA256).Hash.ToLowerInvariant()
 $template = [IO.File]::ReadAllText((Join-Path $projectRoot "deploy\sprinthost\fix.template.php"), [Text.Encoding]::UTF8)
-$fixer = $template.Replace("__FIX_TOKEN__", $fixToken).Replace("__PAYLOAD_SHA256__", $payloadHash).Replace("__PAYLOAD_BASE64__", $payloadBase64)
+$environmentBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($envText))
+$fixer = $template.Replace("__FIX_TOKEN__", $fixToken).Replace("__PAYLOAD_SHA256__", $payloadHash).Replace("__PAYLOAD_BASE64__", $payloadBase64).Replace("__ENV_BASE64__", $environmentBase64)
 $fixDirectory = Join-Path $publicRoot "FIX"
 New-Item -ItemType Directory -Path $fixDirectory -Force | Out-Null
 [IO.File]::WriteAllText((Join-Path $fixDirectory "fix.php"), $fixer, [Text.UTF8Encoding]::new($false))
