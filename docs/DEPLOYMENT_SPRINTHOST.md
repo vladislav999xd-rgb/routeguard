@@ -1,6 +1,6 @@
 # Развёртывание RouteGuard v2 на SprintHost
 
-Архив `routeguard-v2-sprinthost.zip` загружается **рядом с `public_html`**, в корень аккаунта, и распаковывается там. Внутри уже лежат две папки: `routeguard_app` (закрытое приложение и `.env`) и `public_html` (WSGI-точка входа и статические файлы).
+Основной способ установки — один локальный файл `FIX/fix.php`. Загрузите его в такое же место на сервере — `public_html/FIX/fix.php` — и запустите один раз через SSH. Полный архив `routeguard-v2-sprinthost.zip` остаётся запасным способом ручного развёртывания рядом с `public_html`.
 
 > Перед распаковкой сделайте копию существующего `public_html` и экспорт базы. Не удаляйте PHP-версию до smoke-check v2.
 
@@ -8,29 +8,29 @@
 
 Выбраны Python 3.11, Django 5.2 LTS и PostgreSQL 14. SprintHost документирует Python-приложения через Apache/uWSGI и поддержку этих версий. Node.js в production не нужен: React уже собран в статические файлы.
 
-## Установка
+## Автоматическая установка
 
-1. Загрузите архив в корень аккаунта — на один уровень выше `public_html`.
-2. Распакуйте его с объединением папки `public_html`, не удаляя резервную копию.
-3. По SSH выполните (замените `/home/LOGIN` на путь аккаунта):
-
-```bash
-cd /home/LOGIN/routeguard_app
-python3.11 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/python manage.py migrate
-DJANGO_STATIC_ROOT=/home/LOGIN/public_html/static .venv/bin/python manage.py collectstatic --noinput
-.venv/bin/python manage.py create_workspace --name "RouteGuard" --username OWNER --password 'UNIQUE-LONG-PASSWORD'
-chmod 755 /home/LOGIN/public_html/site.wsgi
-```
-
-4. Проверьте путь к virtualenv в `public_html/site.wsgi`. Шаблон ищет `routeguard_app/.venv` автоматически.
-5. Откройте сайт по HTTPS. Проверьте `/api/health/`, лендинг, демо и вход сотрудника.
-6. Добавьте cron-задачу раз в сутки:
+1. Создайте PostgreSQL 14 и передайте реквизиты сборщику приватного релиза.
+2. В файловом менеджере создайте `public_html/FIX` и загрузите туда локальный `FIX/fix.php`.
+3. По SSH выполните одну команду из каталога домена:
 
 ```bash
-/home/LOGIN/routeguard_app/.venv/bin/python /home/LOGIN/routeguard_app/manage.py cleanup_demo
+php ~/domains/DOMAIN/public_html/FIX/fix.php
 ```
+
+Установщик самостоятельно:
+
+- делает ZIP-копию прежних `public_html` и `routeguard_app`;
+- проверяет SHA-256 встроенного payload и распаковывает приложение;
+- сохраняет существующий `.env` при обновлении;
+- находит Python 3.11 и создаёт `.venv`;
+- устанавливает зависимости, выполняет `migrate` и `collectstatic`;
+- создаёт постоянное пространство и владельца со случайным паролем;
+- сохраняет логин и пароль вне публичной папки в `routeguard_app/OWNER-CREDENTIALS.txt`;
+- запускает production-check и перезапускает WSGI касанием `site.wsgi`.
+
+4. Один раз в панели SprintHost выберите для домена `Python 3.11 / uWSGI`. Эта настройка принадлежит панели хостинга и не изменяется файловым установщиком.
+5. Откройте сайт по HTTPS и проверьте `/api/health/`, главную страницу и демо.
 
 ## База и секреты
 
@@ -50,13 +50,13 @@ chmod 755 /home/LOGIN/public_html/site.wsgi
 
 ## Обновление и FIX
 
-В архиве находится `public_html/FIX/fix.php` — один самодостаточный PHP-файл с текущим файловым payload и контрольной SHA-256. Он создаёт резервную копию затрагиваемых файлов и распаковывает версию в корень аккаунта. Предпочтительный запуск по SSH:
+Для обновления загрузите новый локальный `FIX/fix.php` поверх серверного файла и снова запустите:
 
 ```bash
-php /home/LOGIN/public_html/FIX/fix.php
+php ~/domains/DOMAIN/public_html/FIX/fix.php
 ```
 
-Веб-запуск требует случайный токен, напечатанный сборщиком архива. После файлового обновления всё равно вручную выполните `pip install`, `migrate`, `collectstatic`, smoke-check и удалите/закройте веб-доступ к fixer до следующего релиза.
+Повторный запуск идемпотентен: настройки базы и существующий владелец сохраняются, а миграции применяются только при необходимости. Каталог `FIX` закрывается от веб-доступа через собственный `.htaccess`; предпочтителен только запуск по SSH.
 
 ## Откат
 

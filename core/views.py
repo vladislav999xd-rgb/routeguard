@@ -20,7 +20,7 @@ from .exceptions import DomainError
 from .models import Appointment, Comment, Employee, Membership, Route, RouteStep, ScheduleSlot, Study, Task, Workspace
 from .serializers import EmployeeSerializer, RouteDetailSerializer, RouteListSerializer, SlotSerializer, TaskSerializer
 from .services import add_document, assign_route, author_name, audit, book_slot, complete_step, confirm_route, priority_info, save_contact
-from .workspace import get_workspace
+from .workspace import cleanup_expired_demo_workspaces, get_workspace
 
 
 @api_view(["GET"])
@@ -56,6 +56,7 @@ def session_view(request):
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def demo_open(request):
+    cleanup_expired_demo_workspaces()
     old = get_workspace(request, required=False)
     if old and old.kind == Workspace.Kind.DEMO:
         return Response(session_payload(request, old))

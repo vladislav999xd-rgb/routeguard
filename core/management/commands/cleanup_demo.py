@@ -1,12 +1,10 @@
 from django.core.management.base import BaseCommand
-from django.utils import timezone
-
-from core.models import Workspace
+from core.workspace import cleanup_expired_demo_workspaces
 
 
 class Command(BaseCommand):
     help = "Delete expired guest demo workspaces."
 
     def handle(self, *args, **options):
-        count, _ = Workspace.objects.filter(kind=Workspace.Kind.DEMO, expires_at__lte=timezone.now()).delete()
-        self.stdout.write(self.style.SUCCESS(f"Deleted {count} expired demo objects"))
+        count = cleanup_expired_demo_workspaces()
+        self.stdout.write(self.style.SUCCESS(f"Deleted {count} expired demo workspaces"))

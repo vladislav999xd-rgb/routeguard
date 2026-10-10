@@ -72,8 +72,6 @@ DJANGO_STATIC_ROOT=../public_html/static
 
 Copy-Item -LiteralPath $appRoot -Destination $payloadRoot -Recurse -Force
 Copy-Item -LiteralPath $publicRoot -Destination $payloadRoot -Recurse -Force
-$payloadEnvironment = Join-Path $payloadRoot "routeguard_app\.env"
-if (Test-Path -LiteralPath $payloadEnvironment) { Remove-Item -LiteralPath $payloadEnvironment -Force }
 $payloadZip = Join-Path $releaseRoot "payload.zip"
 if (Test-Path -LiteralPath $payloadZip) { Remove-Item -LiteralPath $payloadZip -Force }
 Compress-Archive -Path (Join-Path $payloadRoot "*") -DestinationPath $payloadZip -CompressionLevel Optimal
@@ -85,6 +83,9 @@ $fixer = $template.Replace("__FIX_TOKEN__", $fixToken).Replace("__PAYLOAD_SHA256
 $fixDirectory = Join-Path $publicRoot "FIX"
 New-Item -ItemType Directory -Path $fixDirectory -Force | Out-Null
 [IO.File]::WriteAllText((Join-Path $fixDirectory "fix.php"), $fixer, [Text.UTF8Encoding]::new($false))
+$localFixDirectory = Join-Path $projectRoot "FIX"
+New-Item -ItemType Directory -Path $localFixDirectory -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $localFixDirectory "fix.php"), $fixer, [Text.UTF8Encoding]::new($false))
 
 if (Test-Path -LiteralPath $archivePath) { Remove-Item -LiteralPath $archivePath -Force }
 Compress-Archive -Path (Join-Path $stageRoot "*") -DestinationPath $archivePath -CompressionLevel Optimal
@@ -92,5 +93,6 @@ Compress-Archive -Path (Join-Path $stageRoot "*") -DestinationPath $archivePath 
 
 $archiveHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
 Write-Host "Archive: $archivePath"
+Write-Host "One-file installer: $(Join-Path $projectRoot 'FIX\fix.php')"
 Write-Host "SHA256: $archiveHash"
 Write-Host "FIX token: $fixToken"

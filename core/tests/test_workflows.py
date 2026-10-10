@@ -1,13 +1,17 @@
 from datetime import timedelta
+from io import StringIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from django.db import IntegrityError, transaction
-from django.test import TestCase
+from django.core.management import call_command
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
 from core.demo import create_demo_workspace
 from core.exceptions import DomainError
-from core.models import Appointment, Route, RouteStep, ScheduleSlot, Task
+from core.models import Appointment, Route, RouteStep, ScheduleSlot, Task, Workspace
 from core.services import add_document, book_slot, complete_step, save_contact
 
 
@@ -99,12 +103,32 @@ class RouteGuardWorkflowTests(TestCase):
         after = client.get("/api/dashboard/").data["summary"]["calls_today"]
         self.assertEqual(after, before + 1)
 
+    def test_deployment_bootstrap_is_idempotent(self):
+        with TemporaryDirectory() as temporary:
+            with override_settings(BASE_DIR=temporary):
+                output = StringIO()
+                call_command("bootstrap_deployment", stdout=output)
+                call_command("bootstrap_deployment", stdout=output)
+                self.assertEqual(Workspace.objects.filter(kind=Workspace.Kind.PERSISTENT).count(), 1)
+                credentials = Path(temporary) / "OWNER-CREDENTIALS.txt"
+                self.assertTrue(credentials.exists())
+                self.assertIn("Login: routeguard_owner", credentials.read_text(encoding="utf-8"))
+
     def test_demo_workspaces_are_isolated(self):
         other = create_demo_workspace()
         route = self.route("P001")
         route.status = Route.Status.ACTIVE
         route.save(update_fields=["status"])
         self.assertEqual(other.routes.get(patient__code="P001").status, Route.Status.DRAFT)
+
+    def test_opening_demo_cleans_expired_workspaces(self):
+        expired = create_demo_workspace()
+        expired.expires_at = timezone.now() - timedelta(minutes=1)
+        expired.save(update_fields=["expires_at"])
+        client = APIClient()
+        response = client.post("/api/demo/open/")
+        self.assertEqual(response.status_code, 201)
+        self.assertFalse(Workspace.objects.filter(pk=expired.pk).exists())
 
     def test_scheduled_slot_has_single_owner(self):
         route = self.route("P002")
