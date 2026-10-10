@@ -49,41 +49,37 @@ function canUseWebGL() {
   }
 }
 
-function useScene(root: MutableRefObject<HTMLElement | null>) {
-  const [enabled, setEnabled] = useState(() => typeof window !== 'undefined'
-    && window.matchMedia('(min-width: 800px)').matches
-    && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    && canUseWebGL())
+function useDesktopMode() {
+  const [desktop, setDesktop] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 800px)').matches)
   useEffect(() => {
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)')
-    const desktop = window.matchMedia('(min-width: 800px)')
-    const supportsScene = () => desktop.matches && !reduced.matches && canUseWebGL()
-    const updateMode = () => setEnabled(supportsScene())
+    const desktopQuery = window.matchMedia('(min-width: 800px)')
+    const updateMode = () => setDesktop(desktopQuery.matches)
     updateMode()
-    desktop.addEventListener('change', updateMode)
-    reduced.addEventListener('change', updateMode)
-    return () => {
-      desktop.removeEventListener('change', updateMode)
-      reduced.removeEventListener('change', updateMode)
-    }
-  }, [root])
+    desktopQuery.addEventListener('change', updateMode)
+    return () => desktopQuery.removeEventListener('change', updateMode)
+  }, [])
+  return desktop
+}
+
+function useScene(cinematicEnabled: boolean) {
+  const [enabled, setEnabled] = useState(() => cinematicEnabled && canUseWebGL())
+  useEffect(() => setEnabled(cinematicEnabled && canUseWebGL()), [cinematicEnabled])
   return enabled
 }
 
-function useStoryMotion(root: MutableRefObject<HTMLElement | null>, progress: MutableRefObject<number>) {
+function useStoryMotion(root: MutableRefObject<HTMLElement | null>, progress: MutableRefObject<number>, cinematicEnabled: boolean) {
   const [activeScene, setActiveScene] = useState(1)
   const [ready, setReady] = useState(false)
   useEffect(() => {
     const node = root.current
     if (!node) return
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    const cinematicMotion = !reducedMotion && window.matchMedia('(min-width: 800px)').matches
     const sections = Array.from(node.querySelectorAll<HTMLElement>('[data-scene]'))
     const frame = window.requestAnimationFrame(() => setReady(true))
     let disposed = false
     let cleanupMotion: (() => void) | undefined
+    sections.forEach((section) => section.classList.remove('is-active'))
     sections[0]?.classList.add('is-active')
-    if (cinematicMotion) {
+    if (cinematicEnabled) {
       void import('./storyMotion').then(({ setupStoryMotion }) => {
         if (disposed) return
         cleanupMotion = setupStoryMotion({ node, progress, onActiveScene: setActiveScene })
@@ -96,7 +92,7 @@ function useStoryMotion(root: MutableRefObject<HTMLElement | null>, progress: Mu
       window.cancelAnimationFrame(frame)
       cleanupMotion?.()
     }
-  }, [progress, root])
+  }, [cinematicEnabled, progress, root])
   return { activeScene, ready }
 }
 
@@ -132,15 +128,21 @@ function MiniDashboard() {
 export default function LandingExperience({ busy, error, hasWorkspace, onOpenDemo }: LandingExperienceProps) {
   const root = useRef<HTMLElement | null>(null)
   const progress = useRef(0)
-  const sceneEnabled = useScene(root)
-  const { activeScene, ready } = useStoryMotion(root, progress)
+  const desktop = useDesktopMode()
+  const [motionEnabled, setMotionEnabled] = useState(true)
+  const cinematicEnabled = desktop && motionEnabled
+  const sceneEnabled = useScene(cinematicEnabled)
+  const { activeScene, ready } = useStoryMotion(root, progress, cinematicEnabled)
 
-  return <main className={`story ${sceneEnabled ? 'has-webgl' : 'has-fallback'} ${ready ? 'story-ready' : ''}`} ref={root} id="top">
+  return <main className={`story ${sceneEnabled ? 'has-webgl' : 'has-fallback'} ${cinematicEnabled ? 'has-cinematic' : 'motion-reduced'} ${ready ? 'story-ready' : ''}`} ref={root} id="top">
     <a className="story-skip" href="#content">К содержанию</a>
     {sceneEnabled && <div className="story-canvas"><Suspense fallback={null}><RouteScene progress={progress} /></Suspense></div>}
     <header className="story-header">
       <StoryBrand />
       <nav aria-label="Основная навигация"><a href="#route">Как работает</a><a href="#workspace">Возможности</a><a href="#safety">Безопасность</a><a className="story-login" href="/app">Войти</a></nav>
+      {desktop && <button className="story-motion-toggle" type="button" onClick={() => setMotionEnabled((enabled) => !enabled)} aria-pressed={motionEnabled}>
+        <Sparkles aria-hidden="true" />{motionEnabled ? 'Пауза анимации' : 'Включить анимацию'}
+      </button>}
     </header>
     <nav className="story-progress" aria-label="Сцены презентации">
       {[

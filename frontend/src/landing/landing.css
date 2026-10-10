@@ -74,6 +74,8 @@
 .story-header nav a { color: rgba(38, 50, 45, 0.72); transition: color 180ms ease; }
 .story-header nav a:hover { color: var(--story-green); }
 .story-header .story-login { padding: 0.7rem 1.1rem; color: var(--story-green); border: 1px solid rgba(24, 63, 51, 0.28); border-radius: 999px; }
+.story-motion-toggle { position: fixed; right: clamp(1.1rem, 2vw, 2rem); bottom: 1.25rem; z-index: 24; display: inline-flex; min-height: 2.6rem; padding: 0.6rem 0.85rem; align-items: center; gap: 0.45rem; color: #fff; background: rgba(24, 63, 51, 0.9); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 999px; box-shadow: 0 0.8rem 2.5rem rgba(24, 63, 51, 0.2); cursor: pointer; backdrop-filter: blur(14px); font-size: 0.72rem; }
+.story-motion-toggle:hover { background: #235a47; }
 
 .story-progress {
   position: fixed;
@@ -252,19 +254,19 @@
 
 @keyframes story-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(0.3rem); } }
 
-@media (min-width: 800px) and (prefers-reduced-motion: no-preference) {
-  .story.has-webgl .story-track {
+@media (min-width: 800px) {
+  .story.has-cinematic .story-track {
     position: relative;
     z-index: 2;
     height: 760svh;
   }
-  .story.has-webgl .story-stage {
+  .story.has-cinematic .story-stage {
     position: sticky;
     top: 0;
     height: 100svh;
     overflow: hidden;
   }
-  .story.has-webgl .story-scene {
+  .story.has-cinematic .story-scene {
     position: absolute;
     inset: 0;
     min-height: 100svh;
@@ -273,14 +275,14 @@
     pointer-events: none;
     will-change: transform, opacity;
   }
-  .story.has-webgl .story-scene:first-child {
+  .story.has-cinematic .story-scene:first-child {
     opacity: 1;
     visibility: visible;
   }
-  .story.has-webgl .story-scene.is-active { pointer-events: auto; }
-  .story.has-webgl .story-route { min-height: 100svh; }
-  .story.has-webgl .story-final { display: grid; padding-top: clamp(7rem, 12vh, 10rem); padding-bottom: clamp(4rem, 8vh, 7rem); }
-  .story.has-webgl .story-footer {
+  .story.has-cinematic .story-scene.is-active { pointer-events: auto; }
+  .story.has-cinematic .story-route { min-height: 100svh; }
+  .story.has-cinematic .story-final { display: grid; padding-top: clamp(7rem, 12vh, 10rem); padding-bottom: clamp(4rem, 8vh, 7rem); }
+  .story.has-cinematic .story-footer {
     position: relative;
     z-index: 3;
     width: 100%;
@@ -346,8 +348,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .story *, .story *::before, .story *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
-  .story-canvas { display: none; }
-  .story-fallback-route { display: block; }
-  .story-progress::after { transition: none; }
+  .story.motion-reduced *, .story.motion-reduced *::before, .story.motion-reduced *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+  .story.motion-reduced .story-canvas { display: none; }
+  .story.motion-reduced .story-fallback-route { display: block; }
+  .story.motion-reduced .story-progress::after { transition: none; }
 }

@@ -67,11 +67,35 @@ test('3D landing keeps its content and CTA usable at key breakpoints', async ({ 
   expect(pageErrors).toEqual([])
 })
 
-test('reduced motion keeps the landing readable without WebGL', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'Reduced-motion fallback only needs one desktop run.')
+test('motion can be paused explicitly even when the operating system requests reduced motion', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The desktop motion control only needs one run.')
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.goto('/')
+  await expect(page.locator('.story-canvas canvas')).toBeVisible()
+  await page.getByRole('button', { name: 'Пауза анимации' }).click()
   await expect(page.locator('.story-canvas')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Включить анимацию' })).toBeVisible()
   await expect(page.getByRole('button', { name: /Открыть демо/ }).first()).toBeVisible()
   await expect(page.getByRole('heading', { name: /Каждый следующий шаг пациента/ })).toBeVisible()
+})
+
+test('cinematic DOM transitions remain available when WebGL is unavailable', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The desktop fallback only needs one run.')
+  await page.addInitScript(() => {
+    const original = HTMLCanvasElement.prototype.getContext
+    HTMLCanvasElement.prototype.getContext = function (type: string, ...args: unknown[]) {
+      if (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl') return null
+      return original.call(this, type as '2d', ...args as [])
+    } as typeof HTMLCanvasElement.prototype.getContext
+  })
+  await page.goto('/')
+  await expect(page.locator('.story')).toHaveClass(/has-cinematic/)
+  await expect(page.locator('.story-canvas')).toHaveCount(0)
+  await page.evaluate(() => {
+    const track = document.querySelector<HTMLElement>('.story-track')
+    if (!track) return
+    scrollTo(0, track.offsetTop + (track.offsetHeight - innerHeight) * 0.5)
+  })
+  await page.waitForTimeout(1000)
+  await expect(page.getByRole('heading', { name: /День координатора/ })).toBeVisible()
 })
