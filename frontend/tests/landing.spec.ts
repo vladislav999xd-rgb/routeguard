@@ -4,6 +4,8 @@ import path from 'node:path'
 test('3D landing keeps its content and CTA usable at key breakpoints', async ({ page }, testInfo) => {
   test.setTimeout(60_000)
   test.skip(testInfo.project.name !== 'desktop', 'One project captures the required breakpoint set.')
+  const pageErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(error.message))
 
   const cases = [
     { name: 'desktop', width: 1440, height: 1000, webgl: true },
@@ -62,6 +64,7 @@ test('3D landing keeps its content and CTA usable at key breakpoints', async ({ 
   }
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }))
   await expect(page.getByRole('heading', { name: /Каждый следующий шаг пациента/ })).toBeVisible()
+  expect(pageErrors).toEqual([])
 })
 
 test('reduced motion keeps the landing readable without WebGL', async ({ page }, testInfo) => {

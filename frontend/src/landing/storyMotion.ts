@@ -15,6 +15,7 @@ export function setupStoryMotion({ node, progress, onActiveScene }: StoryMotionO
   if (!track || sections.length === 0) return () => undefined
 
   let activeScene = 1
+  let removeAnchorListeners: () => void = () => {}
   const context = gsap.context(() => {
     gsap.set(sections, { autoAlpha: 0, yPercent: 12, scale: 0.965, pointerEvents: 'none' })
     gsap.set(sections[0], { autoAlpha: 1, yPercent: 0, scale: 1, pointerEvents: 'auto' })
@@ -83,10 +84,13 @@ export function setupStoryMotion({ node, progress, onActiveScene }: StoryMotionO
     }
     const anchors = Array.from(node.querySelectorAll<HTMLAnchorElement>('a[href^="#"]'))
     anchors.forEach((anchor) => anchor.addEventListener('click', jumpToScene))
-    context.add(() => anchors.forEach((anchor) => anchor.removeEventListener('click', jumpToScene)))
+    removeAnchorListeners = () => anchors.forEach((anchor) => anchor.removeEventListener('click', jumpToScene))
   }, node)
 
   sections[0]?.classList.add('is-active')
   ScrollTrigger.refresh()
-  return () => context.revert()
+  return () => {
+    removeAnchorListeners()
+    context.revert()
+  }
 }
