@@ -23,6 +23,28 @@ function Invoke-NativeCommand {
     }
 }
 
+function Test-SshKeyLogin {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SshExecutable,
+        [Parameter(Mandatory = $true)]
+        [string[]]$SshArguments,
+        [Parameter(Mandatory = $true)]
+        [string]$Connection
+    )
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # A rejected key is expected on the first run. Windows PowerShell turns
+        # native stderr into an error record, so silence it only for this probe.
+        $ErrorActionPreference = "SilentlyContinue"
+        & $SshExecutable @SshArguments -o BatchMode=yes -o ConnectTimeout=15 $Connection "true" 2>$null
+        return $LASTEXITCODE -eq 0
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+}
+
 if ($SshUser -notmatch '^[a-zA-Z0-9._-]+$') {
     throw "Некорректный SSH-логин."
 }
@@ -73,8 +95,7 @@ $commonSshArguments = @(
 )
 
 Write-Host "Проверяю SSH-доступ к $connection..." -ForegroundColor Cyan
-& $ssh @commonSshArguments -o BatchMode=yes -o ConnectTimeout=15 $connection "true" 2>$null
-$passwordlessLoginWorks = $LASTEXITCODE -eq 0
+$passwordlessLoginWorks = Test-SshKeyLogin -SshExecutable $ssh -SshArguments $commonSshArguments -Connection $connection
 
 if (-not $passwordlessLoginWorks -and -not (Test-Path -LiteralPath $registrationMarker -PathType Leaf)) {
     Write-Host "Первичная настройка: введите пароль SprintHost, затем код подтверждения." -ForegroundColor Yellow
@@ -86,8 +107,7 @@ if (-not $passwordlessLoginWorks -and -not (Test-Path -LiteralPath $registration
     }
     Set-Content -LiteralPath $registrationMarker -Value ([DateTime]::UtcNow.ToString("O")) -Encoding ASCII
 
-    & $ssh @commonSshArguments -o BatchMode=yes -o ConnectTimeout=15 $connection "true" 2>$null
-    $passwordlessLoginWorks = $LASTEXITCODE -eq 0
+    $passwordlessLoginWorks = Test-SshKeyLogin -SshExecutable $ssh -SshArguments $commonSshArguments -Connection $connection
 }
 
 $remoteFixDirectory = "domains/$Domain/public_html/FIX"
