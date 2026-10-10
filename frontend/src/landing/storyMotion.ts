@@ -11,52 +11,79 @@ type StoryMotionOptions = {
 
 export function setupStoryMotion({ node, progress, onActiveScene }: StoryMotionOptions) {
   const sections = Array.from(node.querySelectorAll<HTMLElement>('[data-scene]'))
+  const track = node.querySelector<HTMLElement>('.story-track')
+  if (!track || sections.length === 0) return () => undefined
+
   let activeScene = 1
   const context = gsap.context(() => {
-    ScrollTrigger.create({
-      trigger: node,
+    gsap.set(sections, { autoAlpha: 0, yPercent: 12, scale: 0.965, pointerEvents: 'none' })
+    gsap.set(sections[0], { autoAlpha: 1, yPercent: 0, scale: 1, pointerEvents: 'auto' })
+
+    const timeline = gsap.timeline({
+      defaults: { ease: 'power2.inOut' },
+      scrollTrigger: {
+      trigger: track,
       start: 'top top',
       end: 'bottom bottom',
-      scrub: 0.75,
+      scrub: 1,
+      invalidateOnRefresh: true,
       onUpdate: (self) => {
         progress.current = self.progress
         node.style.setProperty('--story-progress', `${self.progress * 100}%`)
         const nextScene = Math.min(7, Math.max(1, Math.floor(self.progress * 7) + 1))
         if (nextScene !== activeScene) {
+          sections.forEach((section, index) => {
+            const isActive = index + 1 === nextScene
+            section.classList.toggle('is-active', isActive)
+            section.style.pointerEvents = isActive ? 'auto' : 'none'
+          })
           activeScene = nextScene
           onActiveScene(nextScene)
         }
       },
+      },
     })
 
     sections.forEach((section, sectionIndex) => {
-      ScrollTrigger.create({
-        trigger: section,
-        start: 'top 66%',
-        end: 'bottom 34%',
-        onEnter: () => section.classList.add('is-active'),
-        onEnterBack: () => section.classList.add('is-active'),
-        onLeave: () => section.classList.remove('is-active'),
-        onLeaveBack: () => section.classList.remove('is-active'),
-      })
-      if (sectionIndex === 0) return
-      const copy = section.querySelectorAll('.story-copy > *, .story-kicker')
-      gsap.fromTo(copy, { autoAlpha: 0, y: 72, rotateX: 7 }, {
-        autoAlpha: 1,
-        y: 0,
-        rotateX: 0,
-        stagger: 0.055,
-        ease: 'power2.out',
-        scrollTrigger: { trigger: section, start: 'top 78%', end: 'top 38%', scrub: 0.8 },
-      })
+      const at = sectionIndex
+      if (sectionIndex > 0) {
+        timeline.fromTo(section,
+          { autoAlpha: 0, yPercent: 14, scale: 0.955 },
+          { autoAlpha: 1, yPercent: 0, scale: 1, duration: 0.28 },
+          at - 0.16,
+        )
+      }
+      if (sectionIndex < sections.length - 1) {
+        timeline.to(section,
+          { autoAlpha: 0, yPercent: -12, scale: 1.035, duration: 0.28 },
+          at + 0.72,
+        )
+      }
     })
 
-    gsap.fromTo('.story-card-grid article', { autoAlpha: 0, y: 90, z: -120, rotateY: -8 }, { autoAlpha: 1, y: 0, z: 0, rotateY: 0, stagger: 0.12, ease: 'power2.out', scrollTrigger: { trigger: '.story-problem', start: 'top 72%', end: 'top 34%', scrub: 0.85 } })
-    gsap.fromTo('.route-steps li', { autoAlpha: 0, x: -62 }, { autoAlpha: 1, x: 0, stagger: 0.13, ease: 'power2.out', scrollTrigger: { trigger: '.story-route', start: 'top 68%', end: 'top 32%', scrub: 0.85 } })
-    gsap.fromTo('.story-product', { autoAlpha: 0, y: 100, rotateY: -12, scale: 0.9 }, { autoAlpha: 1, y: 0, rotateY: -3, scale: 1, ease: 'power2.out', scrollTrigger: { trigger: '.story-workspace', start: 'top 70%', end: 'top 30%', scrub: 0.9 } })
-    gsap.fromTo('.call-card', { autoAlpha: 0, x: -100, rotateY: 12, scale: 0.9 }, { autoAlpha: 1, x: 0, rotateY: 0, scale: 1, ease: 'power2.out', scrollTrigger: { trigger: '.story-assistant', start: 'top 70%', end: 'top 30%', scrub: 0.9 } })
-    gsap.fromTo('.analytics-card', { autoAlpha: 0, y: 90, rotateX: 10, scale: 0.9 }, { autoAlpha: 1, y: 0, rotateX: 0, scale: 1, ease: 'power2.out', scrollTrigger: { trigger: '.story-analytics', start: 'top 70%', end: 'top 30%', scrub: 0.9 } })
-    gsap.fromTo('.final-panel', { scale: 0.88, borderRadius: '5rem' }, { scale: 1, borderRadius: '2.7rem', ease: 'power2.out', scrollTrigger: { trigger: '.story-final', start: 'top 88%', end: 'top 24%', scrub: 1 } })
+    timeline.fromTo('.story-card-grid article', { y: 90, z: -120, rotateY: -10 }, { y: 0, z: 0, rotateY: 0, stagger: 0.05, duration: 0.34 }, 0.86)
+    timeline.fromTo('.route-steps li', { x: -80, rotateY: -10 }, { x: 0, rotateY: 0, stagger: 0.055, duration: 0.34 }, 1.86)
+    timeline.fromTo('.story-product', { y: 110, rotateY: -15, scale: 0.88 }, { y: 0, rotateY: -3, scale: 1, duration: 0.42 }, 2.84)
+    timeline.fromTo('.call-card', { x: -120, rotateY: 15, scale: 0.88 }, { x: 0, rotateY: 0, scale: 1, duration: 0.42 }, 3.84)
+    timeline.fromTo('.analytics-card', { y: 100, rotateX: 12, scale: 0.88 }, { y: 0, rotateX: 0, scale: 1, duration: 0.42 }, 4.84)
+    timeline.fromTo('.final-panel', { scale: 0.82, rotateX: 8, borderRadius: '6rem' }, { scale: 1, rotateX: 0, borderRadius: '2.7rem', duration: 0.5 }, 5.82)
+    timeline.to({}, { duration: 0.45 }, 6.35)
+
+    const jumpToScene = (event: Event) => {
+      const anchor = event.currentTarget as HTMLAnchorElement
+      const target = anchor.getAttribute('href')
+      if (!target?.startsWith('#')) return
+      const targetSection = target === '#top' || target === '#content'
+        ? sections[0]
+        : node.querySelector<HTMLElement>(target)
+      const scene = Number(targetSection?.dataset.scene ?? 1)
+      const scrollRange = track.offsetHeight - window.innerHeight
+      event.preventDefault()
+      window.scrollTo({ top: track.offsetTop + scrollRange * ((scene - 1) / (sections.length - 1)), behavior: 'smooth' })
+    }
+    const anchors = Array.from(node.querySelectorAll<HTMLAnchorElement>('a[href^="#"]'))
+    anchors.forEach((anchor) => anchor.addEventListener('click', jumpToScene))
+    context.add(() => anchors.forEach((anchor) => anchor.removeEventListener('click', jumpToScene)))
   }, node)
 
   sections[0]?.classList.add('is-active')

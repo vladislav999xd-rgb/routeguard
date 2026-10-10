@@ -50,23 +50,19 @@ function canUseWebGL() {
 }
 
 function useScene(root: MutableRefObject<HTMLElement | null>) {
-  const [enabled, setEnabled] = useState(false)
+  const [enabled, setEnabled] = useState(() => typeof window !== 'undefined'
+    && window.matchMedia('(min-width: 800px)').matches
+    && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    && canUseWebGL())
   useEffect(() => {
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)')
     const desktop = window.matchMedia('(min-width: 800px)')
-    let idleId: number | undefined
-    let delayId: number | undefined
     const supportsScene = () => desktop.matches && !reduced.matches && canUseWebGL()
     const updateMode = () => setEnabled(supportsScene())
-    if (supportsScene()) {
-      if ('requestIdleCallback' in window) idleId = window.requestIdleCallback(() => setEnabled(true), { timeout: 1200 })
-      else delayId = globalThis.setTimeout(() => setEnabled(true), 600)
-    }
+    updateMode()
     desktop.addEventListener('change', updateMode)
     reduced.addEventListener('change', updateMode)
     return () => {
-      if (idleId !== undefined) window.cancelIdleCallback(idleId)
-      if (delayId !== undefined) window.clearTimeout(delayId)
       desktop.removeEventListener('change', updateMode)
       reduced.removeEventListener('change', updateMode)
     }
@@ -86,22 +82,18 @@ function useStoryMotion(root: MutableRefObject<HTMLElement | null>, progress: Mu
     const frame = window.requestAnimationFrame(() => setReady(true))
     let disposed = false
     let cleanupMotion: (() => void) | undefined
-    let delayId: number | undefined
     sections[0]?.classList.add('is-active')
     if (cinematicMotion) {
-      delayId = globalThis.setTimeout(() => {
-        void import('./storyMotion').then(({ setupStoryMotion }) => {
-          if (disposed) return
-          cleanupMotion = setupStoryMotion({ node, progress, onActiveScene: setActiveScene })
-        })
-      }, 500)
+      void import('./storyMotion').then(({ setupStoryMotion }) => {
+        if (disposed) return
+        cleanupMotion = setupStoryMotion({ node, progress, onActiveScene: setActiveScene })
+      })
     } else {
       sections.forEach((section) => section.classList.add('is-active'))
     }
     return () => {
       disposed = true
       window.cancelAnimationFrame(frame)
-      if (delayId !== undefined) globalThis.clearTimeout(delayId)
       cleanupMotion?.()
     }
   }, [progress, root])
@@ -157,7 +149,8 @@ export default function LandingExperience({ busy, error, hasWorkspace, onOpenDem
       ].map(([href, label], index) => <a key={href} href={href} className={activeScene === index + 1 ? 'active' : ''} aria-label={label}><i /><span>{String(index + 1).padStart(2, '0')} · {label}</span></a>)}
     </nav>
 
-    <div id="content">
+    <div className="story-track" id="content">
+      <div className="story-stage">
       <section className="story-scene story-hero" data-scene="1" aria-labelledby="story-title">
         <div className="story-copy story-copy-wide">
           <SceneLabel number="01">маршрут пациента</SceneLabel>
@@ -245,6 +238,7 @@ export default function LandingExperience({ busy, error, hasWorkspace, onOpenDem
           <div className="final-meta"><span><UsersRound />Для координаторов</span><span><ClipboardList />Синтетические данные</span><span><CalendarCheck2 />Полный демосценарий</span></div>
         </div>
       </section>
+      </div>
     </div>
 
     <footer className="story-footer"><StoryBrand /><p>Самостоятельный демонстрационный продукт · данные синтетические</p><a href="#top">Наверх ↑</a></footer>

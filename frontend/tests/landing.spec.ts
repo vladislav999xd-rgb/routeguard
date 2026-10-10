@@ -40,17 +40,22 @@ test('3D landing keeps its content and CTA usable at key breakpoints', async ({ 
 
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.goto('/')
-  for (const [selector, heading, screenshot] of [
-    ['#problem', /Маршрут распадается/, 'problem'],
-    ['#route', /От диагностики до контроля/, 'route'],
-    ['#workspace', /День координатора/, 'workspace'],
-    ['#assistant', /К разговору не нужно/, 'call'],
-    ['#safety', /Сигналы внимания/, 'analytics'],
-    ['#final', /Пройдите маршрут/, 'final'],
+  for (const [scene, heading, screenshot] of [
+    [2, /Маршрут распадается/, 'problem'],
+    [3, /От диагностики до контроля/, 'route'],
+    [4, /День координатора/, 'workspace'],
+    [5, /К разговору не нужно/, 'call'],
+    [6, /Сигналы внимания/, 'analytics'],
+    [7, /Пройдите маршрут/, 'final'],
   ] as const) {
-    await page.locator(selector).scrollIntoViewIfNeeded()
+    await page.evaluate((targetScene) => {
+      const track = document.querySelector<HTMLElement>('.story-track')
+      if (!track) return
+      const range = track.offsetHeight - window.innerHeight
+      window.scrollTo({ top: track.offsetTop + range * ((targetScene - 1) / 6), behavior: 'instant' })
+    }, scene)
+    await page.waitForTimeout(900)
     await expect(page.getByRole('heading', { name: heading })).toBeVisible()
-    await page.waitForTimeout(550)
     if (['route', 'workspace', 'call', 'final'].includes(screenshot)) {
       await page.screenshot({ path: path.resolve('..', 'screenshots', `landing-3d-${screenshot}.png`), fullPage: false })
     }

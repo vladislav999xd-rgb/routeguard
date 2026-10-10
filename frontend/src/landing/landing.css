@@ -41,7 +41,7 @@
 
 .story-canvas {
   position: fixed;
-  z-index: -1;
+  z-index: 0;
   inset: 0;
   pointer-events: none;
   opacity: 0;
@@ -58,7 +58,7 @@
 }
 
 .story-header {
-  position: absolute;
+  position: fixed;
   z-index: 20;
   top: 0;
   left: 50%;
@@ -251,6 +251,43 @@
 .story-footer > a:last-child { color: var(--story-green); }
 
 @keyframes story-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(0.3rem); } }
+
+@media (min-width: 800px) and (prefers-reduced-motion: no-preference) {
+  .story.has-webgl .story-track {
+    position: relative;
+    z-index: 2;
+    height: 760svh;
+  }
+  .story.has-webgl .story-stage {
+    position: sticky;
+    top: 0;
+    height: 100svh;
+    overflow: hidden;
+  }
+  .story.has-webgl .story-scene {
+    position: absolute;
+    inset: 0;
+    min-height: 100svh;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    will-change: transform, opacity;
+  }
+  .story.has-webgl .story-scene:first-child {
+    opacity: 1;
+    visibility: visible;
+  }
+  .story.has-webgl .story-scene.is-active { pointer-events: auto; }
+  .story.has-webgl .story-route { min-height: 100svh; }
+  .story.has-webgl .story-final { display: grid; padding-top: clamp(7rem, 12vh, 10rem); padding-bottom: clamp(4rem, 8vh, 7rem); }
+  .story.has-webgl .story-footer {
+    position: relative;
+    z-index: 3;
+    width: 100%;
+    padding-inline: max(1.5rem, calc((100% - 1440px) / 2));
+    background: var(--story-milk);
+  }
+}
 
 @media (max-width: 1100px) {
   .story-scene { grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 2rem; }
