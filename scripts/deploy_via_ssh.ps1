@@ -1,0 +1,117 @@
+﻿[CmdletBinding()]
+param(
+    [string]$SshUser = "a1239227",
+    [string]$SshHost = "irbitdp.ru",
+    [string]$Domain = "irbitdp.ru",
+    [int]$Port = 22,
+    [string]$KeyPath = (Join-Path $env:USERPROFILE ".ssh\routeguard_sprinthost_ed25519")
+)
+
+$ErrorActionPreference = "Stop"
+
+function Invoke-NativeCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$Command,
+        [Parameter(Mandatory = $true)]
+        [string]$FailureMessage
+    )
+
+    & $Command
+    if ($LASTEXITCODE -ne 0) {
+        throw "$FailureMessage (код $LASTEXITCODE)."
+    }
+}
+
+if ($SshUser -notmatch '^[a-zA-Z0-9._-]+$') {
+    throw "Некорректный SSH-логин."
+}
+if ($SshHost -notmatch '^[a-zA-Z0-9.-]+$') {
+    throw "Некорректный SSH-хост."
+}
+if ($Domain -notmatch '^[a-zA-Z0-9.-]+$') {
+    throw "Некорректный домен."
+}
+
+$projectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
+$fixPath = Join-Path $projectRoot "FIX\fix.php"
+if (-not (Test-Path -LiteralPath $fixPath -PathType Leaf)) {
+    throw "Не найден установщик: $fixPath. Сначала запустите scripts\build_release.ps1."
+}
+
+$ssh = (Get-Command ssh.exe -ErrorAction Stop).Source
+$scp = (Get-Command scp.exe -ErrorAction Stop).Source
+$sshKeygen = (Get-Command ssh-keygen.exe -ErrorAction Stop).Source
+
+$keyDirectory = Split-Path -Parent $KeyPath
+if (-not (Test-Path -LiteralPath $keyDirectory -PathType Container)) {
+    New-Item -ItemType Directory -Path $keyDirectory -Force | Out-Null
+}
+
+if (-not (Test-Path -LiteralPath $KeyPath -PathType Leaf)) {
+    Write-Host "Создаю отдельный SSH-ключ RouteGuard..." -ForegroundColor Cyan
+    Invoke-NativeCommand -FailureMessage "Не удалось создать SSH-ключ" -Command {
+        & $sshKeygen -q -t ed25519 -f $KeyPath -N '""' -C "routeguard-deploy"
+    }
+}
+
+$publicKeyPath = "$KeyPath.pub"
+if (-not (Test-Path -LiteralPath $publicKeyPath -PathType Leaf)) {
+    throw "Не найден открытый SSH-ключ: $publicKeyPath."
+}
+
+$connection = "${SshUser}@${SshHost}"
+$commonSshArguments = @(
+    "-i", $KeyPath,
+    "-p", $Port,
+    "-o", "IdentitiesOnly=yes",
+    "-o", "StrictHostKeyChecking=accept-new"
+)
+
+Write-Host "Проверяю SSH-доступ к $connection..." -ForegroundColor Cyan
+& $ssh @commonSshArguments -o BatchMode=yes -o ConnectTimeout=15 $connection "true" 2>$null
+$keyIsInstalled = $LASTEXITCODE -eq 0
+
+if (-not $keyIsInstalled) {
+    Write-Host "Первичная настройка: введите пароль от панели SprintHost один раз." -ForegroundColor Yellow
+    $installKeyCommand = 'umask 077; mkdir -p "$HOME/.ssh"; touch "$HOME/.ssh/authorized_keys"; key=$(cat); grep -qxF "$key" "$HOME/.ssh/authorized_keys" || printf "%s\n" "$key" >> "$HOME/.ssh/authorized_keys"; chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"'
+    Get-Content -LiteralPath $publicKeyPath -Raw | & $ssh -p $Port -o StrictHostKeyChecking=accept-new -o "PreferredAuthentications=password,keyboard-interactive" -o PubkeyAuthentication=no $connection $installKeyCommand
+    if ($LASTEXITCODE -ne 0) {
+        throw "Не удалось добавить SSH-ключ на SprintHost. Проверьте логин аккаунта и пароль от панели."
+    }
+
+    Invoke-NativeCommand -FailureMessage "SSH-ключ добавлен, но вход по нему не работает" -Command {
+        & $ssh @commonSshArguments -o BatchMode=yes -o ConnectTimeout=15 $connection "true"
+    }
+}
+
+$remoteFixDirectory = "domains/$Domain/public_html/FIX"
+$remoteFixPath = "$remoteFixDirectory/fix.php"
+
+Write-Host "Подготавливаю папку FIX на хостинге..." -ForegroundColor Cyan
+Invoke-NativeCommand -FailureMessage "Не удалось создать удалённую папку FIX" -Command {
+    & $ssh @commonSshArguments -o BatchMode=yes $connection "umask 077; mkdir -p '$remoteFixDirectory'"
+}
+
+Write-Host "Загружаю единый установщик (архив отдельно не нужен)..." -ForegroundColor Cyan
+Invoke-NativeCommand -FailureMessage "Не удалось загрузить FIX/fix.php" -Command {
+    & $scp -i $KeyPath -P $Port -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new $fixPath "${connection}:$remoteFixPath"
+}
+
+Write-Host "Запускаю автоматическую установку RouteGuard..." -ForegroundColor Green
+Invoke-NativeCommand -FailureMessage "Установщик RouteGuard завершился с ошибкой" -Command {
+    & $ssh @commonSshArguments -o BatchMode=yes -t $connection "php '$remoteFixPath'"
+}
+
+Write-Host "Проверяю адрес приложения..." -ForegroundColor Cyan
+try {
+    $health = Invoke-WebRequest -Uri "https://$Domain/api/health/" -UseBasicParsing -TimeoutSec 20
+    if ($health.StatusCode -ge 200 -and $health.StatusCode -lt 400) {
+        Write-Host "Готово: https://$Domain/" -ForegroundColor Green
+    }
+} catch {
+    Write-Host "Файлы установлены. Если сайт пока не открылся, выберите Python 3.11/uWSGI в панели SprintHost." -ForegroundColor Yellow
+    Write-Host "После этого проверьте: https://$Domain/api/health/" -ForegroundColor Yellow
+}
+
+Write-Host "Данные владельца: ~/domains/$Domain/routeguard_app/OWNER-CREDENTIALS.txt" -ForegroundColor Green
