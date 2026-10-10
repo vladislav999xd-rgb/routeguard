@@ -14,6 +14,8 @@ RouteGuard uses open-source packages distributed under their respective licenses
 | Tailwind CSS | MIT |
 | Lucide React | ISC |
 | Recharts | MIT |
+| Three.js | MIT |
+| React Three Fiber | MIT |
 | Playwright | Apache-2.0 |
 | Fontsource packaging | MIT |
 | Golos Text font | OFL-1.1 |

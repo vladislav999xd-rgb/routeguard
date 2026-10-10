@@ -3,7 +3,7 @@ import path from 'node:path'
 
 test('graphite and sage workspace has no global horizontal overflow', async ({ page }, testInfo) => {
   await page.goto('/')
-  await page.getByRole('button', { name: /Открыть демо/ }).click()
+  await page.getByRole('button', { name: /Открыть демо/ }).first().click()
   await expect(page.getByRole('heading', { name: 'Рабочий день' })).toBeVisible()
   await page.getByLabel(/Открыть маршрут/).first().click()
   await expect(page.getByRole('complementary', { name: 'Карточка пациента' })).toBeVisible()

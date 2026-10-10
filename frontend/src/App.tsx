@@ -2,7 +2,9 @@ import {
   createContext,
   FormEvent,
   KeyboardEvent,
+  lazy,
   ReactNode,
+  Suspense,
   useContext,
   useEffect,
   useMemo,
@@ -46,19 +48,10 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts'
 import { api, formatDate, post, Session } from './api'
+import LandingExperience from './landing/LandingExperience'
+
+const AnalyticsPage = lazy(() => import('./AnalyticsPage'))
 
 type Priority = { score: number; level: string; label: string; reason: string }
 type RouteRow = {
@@ -208,6 +201,27 @@ function useLoad<T>(loader: () => Promise<T>, deps: unknown[] = []) {
 }
 
 function Landing() {
+  const navigate = useNavigate()
+  const { session, refresh } = useSession()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const openDemo = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      await post('/demo/open/')
+      await refresh()
+      navigate('/app')
+    } catch (reason) {
+      setError((reason as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return <LandingExperience busy={busy} error={error} hasWorkspace={Boolean(session?.workspace)} onOpenDemo={openDemo} />
+}
+
+function LegacyLanding() {
   const navigate = useNavigate()
   const { session, refresh } = useSession()
   const [busy, setBusy] = useState(false)
@@ -470,17 +484,6 @@ function SchedulePage() {
   return <><PageHead eyebrow="Доступность" title="Расписание" text="Слоты специалистов и площадок. Прошедшее время при записи отклоняется сервером." /><div className="tabs"><button className={status === 'free' ? 'active' : ''} onClick={() => setStatus('free')}>Свободные</button><button className={status === 'busy' ? 'active' : ''} onClick={() => setStatus('busy')}>Занятые</button></div>{error ? <ErrorState error={error} retry={reload} /> : !data ? <Loading /> : <div className="schedule-grid">{Object.entries(grouped).slice(0, 12).map(([day, slots]) => <section className="panel day" key={day}><h2>{day}</h2>{slots.map((slot) => <div className="schedule-slot" key={slot.id}><time>{new Date(slot.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</time><div><b>{slot.service_name}</b><span>{slot.specialist_name}</span><small>{slot.facility_name}</small></div><span className={`availability ${slot.status}`}>{slot.status === 'free' ? 'Свободен' : 'Занят'}</span></div>)}</section>)}</div>}</>
 }
 
-function AnalyticsPage() {
-  const { data, error, reload } = useLoad<DashboardData>(() => api('/dashboard/'))
-  if (error) return <ErrorState error={error} retry={reload} />
-  if (!data) return <Loading />
-  const statusLabels: Record<string, string> = { active: 'В работе', completed: 'Завершены', draft: 'Черновики', cancelled: 'Отменены' }
-  const attentionLabels: Record<string, string> = { overdue: 'Просрочены', cancelled: 'После отмены', missed: 'После неявки', no_slot: 'Нет слота', no_assignee: 'Нет ответственного', no_document: 'Нет документа', no_confirmation: 'Нет подтверждения', due_soon: 'Срок близко', none: 'Без причин' }
-  const statuses = Object.entries(data.status_counts).map(([key, value]) => ({ name: statusLabels[key] ?? key, value }))
-  const reasons = Object.entries(data.attention_counts).filter(([key]) => key !== 'none').map(([key, value]) => ({ name: attentionLabels[key] ?? key, value }))
-  return <><PageHead eyebrow="Сводные показатели" title="Аналитика" text="Распределение маршрутов и организационных причин внимания." /><div className="analytics-grid"><section className="panel"><h2>Состояние маршрутов</h2><div className="donut-wrap"><ResponsiveContainer width="100%" height={280}><PieChart><Pie data={statuses} dataKey="value" nameKey="name" innerRadius={70} outerRadius={105} paddingAngle={2}>{statuses.map((_, index) => <Cell key={index} fill={['#32745D', '#82968A', '#C4CEC7', '#946214'][index % 4]} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer><div className="donut-center"><b>{data.summary.total}</b><span>маршрутов</span></div></div><div className="chart-legend">{statuses.map((item, index) => <span key={item.name}><i style={{ background: ['#32745D', '#82968A', '#C4CEC7', '#946214'][index % 4] }} />{item.name}: {item.value}</span>)}</div></section><section className="panel"><h2>Причины внимания</h2>{reasons.length ? <ResponsiveContainer width="100%" height={320}><BarChart data={reasons} layout="vertical" margin={{ left: 20, right: 24 }}><CartesianGrid stroke="#DEE4DE" horizontal={false} /><XAxis type="number" allowDecimals={false} stroke="#68766E" /><YAxis type="category" dataKey="name" width={125} tick={{ fill: '#68766E', fontSize: 11 }} axisLine={false} tickLine={false} /><Tooltip /><Bar dataKey="value" fill="#32745D" radius={[0, 3, 3, 0]} /></BarChart></ResponsiveContainer> : <Empty text="Причин внимания нет" />}</section></div></>
-}
-
 const scenarioNotes = ['Черновик: требуется подтверждение', 'Активный маршрут: доступен слот', 'Будущая запись подтверждена', 'Приём назначен на демодату', 'Завершённый маршрут', 'Возврат после отмены пациентом', 'Неявка и задача координатору', 'Нет слота до срока', 'Просроченный шаг', 'Неполное заключение', 'Нет ответственного', 'Нет подтверждающего документа', 'Маршрут из двух шагов', 'Запрос на перенос', 'Защита от дубля', 'Согласование времени', 'Отмена клиникой', 'Альтернативная площадка', 'Два выполненных шага', 'Срок наступает завтра']
 
 function ScenariosPage() {
@@ -526,7 +529,7 @@ function ProtectedApp() {
   const location = useLocation()
   if (!session) return <div className="center-screen"><Loading /></div>
   if (!session.workspace) return <AccessScreen />
-  return <AppShell><Routes location={location}><Route index element={<Dashboard />} /><Route path="routes" element={<RoutesPage />} /><Route path="routes/:id" element={<RouteDetailPage />} /><Route path="tasks" element={<TasksPage />} /><Route path="schedule" element={<SchedulePage />} /><Route path="analytics" element={<AnalyticsPage />} /><Route path="scenarios" element={<ScenariosPage />} /><Route path="settings" element={<SettingsPage />} /><Route path="*" element={<Navigate to="/app" replace />} /></Routes></AppShell>
+  return <AppShell><Routes location={location}><Route index element={<Dashboard />} /><Route path="routes" element={<RoutesPage />} /><Route path="routes/:id" element={<RouteDetailPage />} /><Route path="tasks" element={<TasksPage />} /><Route path="schedule" element={<SchedulePage />} /><Route path="analytics" element={<Suspense fallback={<Loading />}><AnalyticsPage /></Suspense>} /><Route path="scenarios" element={<ScenariosPage />} /><Route path="settings" element={<SettingsPage />} /><Route path="*" element={<Navigate to="/app" replace />} /></Routes></AppShell>
 }
 
 export default function App() {

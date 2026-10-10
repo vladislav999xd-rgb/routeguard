@@ -4,7 +4,9 @@ RouteGuard — самостоятельный сервис для координ
 
 > Статус: готовый демонстрационный продукт. Все данные синтетические; интеграции с МИС, телефонией и уведомлениями обозначены как следующие этапы.
 
-![Рабочая панель RouteGuard в теме «Графит и шалфей»](screenshots/graphite-sage-desktop.png)
+![Интерактивный 3D-лендинг RouteGuard](screenshots/landing-3d-desktop.png)
+
+Ознакомительная страница — это семь связанных сцен от проблемы разрозненных действий до рабочего места координатора и безопасного демо. На desktop маршрут отображается настоящей процедурной Three.js-сценой с камерой, привязанной к нативной прокрутке; на мобильных устройствах, при `prefers-reduced-motion` и без WebGL используется лёгкая HTML/CSS-схема. Заголовок и CTA не зависят от загрузки 3D.
 
 ## Как устроено решение
 
@@ -68,7 +70,8 @@ python manage.py runserver
 
 | Путь | Назначение |
 |---|---|
-| `frontend/` | React 19, TypeScript, Vite, Tailwind CSS, e2e-тесты |
+| `frontend/` | React 19, TypeScript, Vite, Three.js / React Three Fiber, e2e-тесты |
+| `frontend/src/landing/` | семь DOM-сцен лендинга, scroll-driven WebGL-маршрут и адаптивный fallback |
 | `core/` | модели, REST API, правила маршрутов, демосценарии и backend-тесты |
 | `routeguard/` | конфигурация Django и WSGI |
 | `backend_static/` | готовая production-сборка интерфейса |
@@ -97,6 +100,7 @@ npx playwright test
 - [Демосценарии](docs/DEMO_SCENARIOS.md)
 - [Развёртывание на SprintHost](docs/DEPLOYMENT_SPRINTHOST.md)
 - [Тестирование](docs/TESTING.md)
+- [3D-лендинг](docs/LANDING_3D.md)
 - [Миграция и откат](docs/MIGRATION.md)
 - [Аудит предыдущей версии](docs/CURRENT_AUDIT.md)
 
