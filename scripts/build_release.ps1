@@ -40,7 +40,7 @@ foreach ($directory in @("core", "routeguard", "backend_static")) {
 }
 $releaseScreenshots = Join-Path $appRoot "screenshots"
 New-Item -ItemType Directory -Path $releaseScreenshots -Force | Out-Null
-Get-ChildItem -LiteralPath (Join-Path $projectRoot "screenshots") -Filter "v2-*.png" -File | Copy-Item -Destination $releaseScreenshots -Force
+Get-ChildItem -LiteralPath (Join-Path $projectRoot "screenshots") -Filter "graphite-sage-*.png" -File | Copy-Item -Destination $releaseScreenshots -Force
 foreach ($file in @("manage.py", "requirements.txt", "requirements-dev.txt", "README.md", "THIRD_PARTY_NOTICES.md")) {
     Copy-Item -LiteralPath (Join-Path $projectRoot $file) -Destination $appRoot -Force
 }

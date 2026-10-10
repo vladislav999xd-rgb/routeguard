@@ -83,6 +83,22 @@ class RouteGuardWorkflowTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.workspace.events.count(), before)
 
+    def test_dashboard_counts_callback_tasks_due_today(self):
+        client = APIClient()
+        session = client.session
+        session["routeguard_workspace_id"] = str(self.workspace.id)
+        session.save()
+        before = client.get("/api/dashboard/").data["summary"]["calls_today"]
+        Task.objects.create(
+            workspace=self.workspace,
+            route=self.route("P016"),
+            kind=Task.Kind.CALLBACK,
+            title="Контрольный звонок сегодня",
+            due_at=self.workspace.reference_now(),
+        )
+        after = client.get("/api/dashboard/").data["summary"]["calls_today"]
+        self.assertEqual(after, before + 1)
+
     def test_demo_workspaces_are_isolated(self):
         other = create_demo_workspace()
         route = self.route("P001")

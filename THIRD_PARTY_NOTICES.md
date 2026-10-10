@@ -15,5 +15,7 @@ RouteGuard uses open-source packages distributed under their respective licenses
 | Lucide React | ISC |
 | Recharts | MIT |
 | Playwright | Apache-2.0 |
+| Fontsource packaging | MIT |
+| Golos Text font | OFL-1.1 |
 
 This file is a summary, not a replacement for the license text shipped by each dependency.
