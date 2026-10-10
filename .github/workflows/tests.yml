@@ -8,37 +8,35 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  django:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      RG_DEV: "1"
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          php-version: "8.2"
-          extensions: mbstring, pdo_sqlite
-          coverage: none
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: python manage.py check
+      - run: python manage.py test core.tests -v 2
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-
-      - name: PHP syntax
-        shell: bash
-        run: find . -type f -name '*.php' -not -path './FIX/backups/*' -print0 | xargs -0 -n1 php -l
-
-      - name: JavaScript syntax
-        run: node --check assets/app.js
-
-      - name: Route rules
-        run: php tests/smoke.php
-
-      - name: Call assistant
-        run: php tests/call_assistant.php
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm audit --audit-level=high
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend

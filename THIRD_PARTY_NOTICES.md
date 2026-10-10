@@ -1,12 +1,19 @@
-# Сторонние компоненты
+# Third-party notices
 
-Все frontend-зависимости включены локально; приложение не обращается к CDN.
+RouteGuard uses open-source packages distributed under their respective licenses. Exact resolved frontend versions are recorded in `frontend/package-lock.json`; Python versions are pinned in `requirements.txt`.
 
-| Компонент | Версия | Лицензия | Источник |
-|---|---:|---|---|
-| Bootstrap | 5.3.8 | MIT | https://github.com/twbs/bootstrap |
-| Chart.js | 4.5.1 | MIT | https://github.com/chartjs/Chart.js |
-| Montserrat | v31, локальные WOFF2 | SIL Open Font License 1.1 | https://github.com/JulietaUla/Montserrat |
-| Tabler Icons (формы системных иконок) | 3.48.0 | MIT | https://github.com/tabler/tabler-icons |
+| Component | License |
+|---|---|
+| Django | BSD-3-Clause |
+| Django REST framework | BSD-3-Clause |
+| psycopg | LGPL-3.0 with exceptions |
+| python-dotenv | BSD-3-Clause |
+| React / React DOM | MIT |
+| React Router | MIT |
+| Vite | MIT |
+| Tailwind CSS | MIT |
+| Lucide React | ISC |
+| Recharts | MIT |
+| Playwright | Apache-2.0 |
 
-Исходные лицензии доступны в указанных репозиториях. Bootstrap, Chart.js и Tabler Icons распространяются по MIT; Montserrat — по SIL OFL 1.1. Проект не содержит текстов, медицинских рекомендаций или данных из этих репозиториев.
+This file is a summary, not a replacement for the license text shipped by each dependency.
