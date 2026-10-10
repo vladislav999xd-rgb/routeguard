@@ -207,6 +207,7 @@ foreach ($requiredFiles as $requiredFile) {
         routeguard_fail('required file was not extracted: ' . $requiredFile . ". Restore the backup: {$backup}");
     }
 }
+@chmod($publicRoot . '/site.wsgi', 0755);
 echo "RouteGuard FIX: payload files extracted and verified.\n";
 
 if ($existingEnvironment !== null) {
