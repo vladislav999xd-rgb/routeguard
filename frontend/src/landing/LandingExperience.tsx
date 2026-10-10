@@ -49,7 +49,7 @@ function canUseWebGL() {
   }
 }
 
-function useScene(progress: MutableRefObject<number>, root: MutableRefObject<HTMLElement | null>) {
+function useScene(root: MutableRefObject<HTMLElement | null>) {
   const [enabled, setEnabled] = useState(false)
   useEffect(() => {
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -58,31 +58,54 @@ function useScene(progress: MutableRefObject<number>, root: MutableRefObject<HTM
     let delayId: number | undefined
     const supportsScene = () => desktop.matches && !reduced.matches && canUseWebGL()
     const updateMode = () => setEnabled(supportsScene())
-    const updateProgress = () => {
-      const node = root.current
-      if (!node) return
-      const available = Math.max(1, node.scrollHeight - window.innerHeight)
-      progress.current = Math.min(1, Math.max(0, (window.scrollY - node.offsetTop) / available))
-    }
     if (supportsScene()) {
       if ('requestIdleCallback' in window) idleId = window.requestIdleCallback(() => setEnabled(true), { timeout: 1200 })
       else delayId = globalThis.setTimeout(() => setEnabled(true), 600)
     }
-    updateProgress()
     desktop.addEventListener('change', updateMode)
     reduced.addEventListener('change', updateMode)
-    window.addEventListener('scroll', updateProgress, { passive: true })
-    window.addEventListener('resize', updateProgress, { passive: true })
     return () => {
       if (idleId !== undefined) window.cancelIdleCallback(idleId)
       if (delayId !== undefined) window.clearTimeout(delayId)
       desktop.removeEventListener('change', updateMode)
       reduced.removeEventListener('change', updateMode)
-      window.removeEventListener('scroll', updateProgress)
-      window.removeEventListener('resize', updateProgress)
+    }
+  }, [root])
+  return enabled
+}
+
+function useStoryMotion(root: MutableRefObject<HTMLElement | null>, progress: MutableRefObject<number>) {
+  const [activeScene, setActiveScene] = useState(1)
+  const [ready, setReady] = useState(false)
+  useEffect(() => {
+    const node = root.current
+    if (!node) return
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const cinematicMotion = !reducedMotion && window.matchMedia('(min-width: 800px)').matches
+    const sections = Array.from(node.querySelectorAll<HTMLElement>('[data-scene]'))
+    const frame = window.requestAnimationFrame(() => setReady(true))
+    let disposed = false
+    let cleanupMotion: (() => void) | undefined
+    let delayId: number | undefined
+    sections[0]?.classList.add('is-active')
+    if (cinematicMotion) {
+      delayId = globalThis.setTimeout(() => {
+        void import('./storyMotion').then(({ setupStoryMotion }) => {
+          if (disposed) return
+          cleanupMotion = setupStoryMotion({ node, progress, onActiveScene: setActiveScene })
+        })
+      }, 500)
+    } else {
+      sections.forEach((section) => section.classList.add('is-active'))
+    }
+    return () => {
+      disposed = true
+      window.cancelAnimationFrame(frame)
+      if (delayId !== undefined) globalThis.clearTimeout(delayId)
+      cleanupMotion?.()
     }
   }, [progress, root])
-  return enabled
+  return { activeScene, ready }
 }
 
 function SceneLabel({ number, children }: { number: string; children: string }) {
@@ -117,18 +140,25 @@ function MiniDashboard() {
 export default function LandingExperience({ busy, error, hasWorkspace, onOpenDemo }: LandingExperienceProps) {
   const root = useRef<HTMLElement | null>(null)
   const progress = useRef(0)
-  const sceneEnabled = useScene(progress, root)
+  const sceneEnabled = useScene(root)
+  const { activeScene, ready } = useStoryMotion(root, progress)
 
-  return <main className={`story ${sceneEnabled ? 'has-webgl' : 'has-fallback'}`} ref={root} id="top">
+  return <main className={`story ${sceneEnabled ? 'has-webgl' : 'has-fallback'} ${ready ? 'story-ready' : ''}`} ref={root} id="top">
     <a className="story-skip" href="#content">К содержанию</a>
     {sceneEnabled && <div className="story-canvas"><Suspense fallback={null}><RouteScene progress={progress} /></Suspense></div>}
     <header className="story-header">
       <StoryBrand />
       <nav aria-label="Основная навигация"><a href="#route">Как работает</a><a href="#workspace">Возможности</a><a href="#safety">Безопасность</a><a className="story-login" href="/app">Войти</a></nav>
     </header>
+    <nav className="story-progress" aria-label="Сцены презентации">
+      {[
+        ['#top', 'Маршрут'], ['#problem', 'Проблема'], ['#route', 'Этапы'], ['#workspace', 'Кабинет'],
+        ['#assistant', 'Звонок'], ['#safety', 'Аналитика'], ['#final', 'Демо'],
+      ].map(([href, label], index) => <a key={href} href={href} className={activeScene === index + 1 ? 'active' : ''} aria-label={label}><i /><span>{String(index + 1).padStart(2, '0')} · {label}</span></a>)}
+    </nav>
 
     <div id="content">
-      <section className="story-scene story-hero" aria-labelledby="story-title">
+      <section className="story-scene story-hero" data-scene="1" aria-labelledby="story-title">
         <div className="story-copy story-copy-wide">
           <SceneLabel number="01">маршрут пациента</SceneLabel>
           <h1 id="story-title">Каждый следующий шаг пациента — под контролем</h1>
@@ -141,7 +171,7 @@ export default function LandingExperience({ busy, error, hasWorkspace, onOpenDem
         <span className="story-scroll-hint">Листайте, чтобы пройти маршрут <ChevronDown /></span>
       </section>
 
-      <section className="story-scene story-problem" aria-labelledby="problem-title">
+      <section className="story-scene story-problem" id="problem" data-scene="2" aria-labelledby="problem-title">
         <div className="story-copy">
           <SceneLabel number="02">проблема</SceneLabel>
           <h2 id="problem-title">Маршрут распадается на звонки, сроки и документы</h2>
@@ -154,7 +184,7 @@ export default function LandingExperience({ busy, error, hasWorkspace, onOpenDem
         </div>
       </section>
 
-      <section className="story-scene story-route" id="route" aria-labelledby="route-title">
+      <section className="story-scene story-route" id="route" data-scene="3" aria-labelledby="route-title">
         <div className="story-copy story-copy-right">
           <SceneLabel number="03">единый маршрут</SceneLabel>
           <h2 id="route-title">От диагностики до контроля — одна понятная линия</h2>
@@ -167,7 +197,7 @@ export default function LandingExperience({ busy, error, hasWorkspace, onOpenDem
         </ol>
       </section>
 
-      <section className="story-scene story-workspace" id="workspace" aria-labelledby="workspace-title">
+      <section className="story-scene story-workspace" id="workspace" data-scene="4" aria-labelledby="workspace-title">
         <div className="story-copy">
           <SceneLabel number="04">рабочее место</SceneLabel>
           <h2 id="workspace-title">День координатора виден целиком</h2>
@@ -177,7 +207,7 @@ export default function LandingExperience({ busy, error, hasWorkspace, onOpenDem
         <MiniDashboard />
       </section>
 
-      <section className="story-scene story-assistant" aria-labelledby="assistant-title">
+      <section className="story-scene story-assistant" id="assistant" data-scene="5" aria-labelledby="assistant-title">
         <div className="story-copy story-copy-right">
           <SceneLabel number="05">помощник звонка</SceneLabel>
           <h2 id="assistant-title">К разговору не нужно готовиться с нуля</h2>
@@ -190,7 +220,7 @@ export default function LandingExperience({ busy, error, hasWorkspace, onOpenDem
         </article>
       </section>
 
-      <section className="story-scene story-analytics" id="safety" aria-labelledby="analytics-title">
+      <section className="story-scene story-analytics" id="safety" data-scene="6" aria-labelledby="analytics-title">
         <div className="story-copy">
           <SceneLabel number="06">объяснимая аналитика</SceneLabel>
           <h2 id="analytics-title">Сигналы внимания без чёрного ящика</h2>
@@ -204,7 +234,7 @@ export default function LandingExperience({ busy, error, hasWorkspace, onOpenDem
         </div>
       </section>
 
-      <section className="story-scene story-final" aria-labelledby="final-title">
+      <section className="story-scene story-final" id="final" data-scene="7" aria-labelledby="final-title">
         <div className="final-panel">
           <span className="final-glow" aria-hidden="true"><Sparkles /></span>
           <SceneLabel number="07">посмотреть в работе</SceneLabel>

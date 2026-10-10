@@ -16,6 +16,7 @@ RouteGuard uses open-source packages distributed under their respective licenses
 | Recharts | MIT |
 | Three.js | MIT |
 | React Three Fiber | MIT |
+| GSAP | Standard "no charge" license |
 | Playwright | Apache-2.0 |
 | Fontsource packaging | MIT |
 | Golos Text font | OFL-1.1 |

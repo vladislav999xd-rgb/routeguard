@@ -48,6 +48,7 @@ Frontend собирается локально Vite и на production отда�
 | `frontend/src/api.ts` | единый клиент API и CSRF |
 | `frontend/src/landing/LandingExperience.tsx` | семь семантических сцен, CTA, responsive и fallback |
 | `frontend/src/landing/RouteScene.tsx` | процедурная 3D-линия, станции, освещение и camera-on-rail |
+| `frontend/src/landing/storyMotion.ts` | lazy-loaded GSAP ScrollTrigger, scroll-scrub и переходы DOM-сцен |
 
 ## Ключевые инварианты
 
