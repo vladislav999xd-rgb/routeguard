@@ -83,6 +83,50 @@ function routeguard_clear_public(string $publicRoot): void
     }
 }
 
+function routeguard_extract_payload(ZipArchive $zip, string $destination): void
+{
+    for ($index = 0; $index < $zip->numFiles; $index++) {
+        $entry = $zip->getNameIndex($index);
+        if ($entry === false) routeguard_fail("cannot read payload entry {$index}.");
+        $normalized = str_replace('\\', '/', $entry);
+        if (
+            $normalized === '' ||
+            $normalized[0] === '/' ||
+            strpos($normalized, "\0") !== false ||
+            preg_match('#(^|/)\.\.(/|$)#', $normalized) === 1
+        ) {
+            routeguard_fail("unsafe payload entry: {$entry}");
+        }
+
+        $relative = rtrim($normalized, '/');
+        if ($relative === '') continue;
+        $target = $destination . '/' . $relative;
+        if (substr($normalized, -1) === '/') {
+            if (!is_dir($target) && !mkdir($target, 0755, true) && !is_dir($target)) {
+                routeguard_fail("cannot create payload directory: {$relative}");
+            }
+            continue;
+        }
+
+        $parent = dirname($target);
+        if (!is_dir($parent) && !mkdir($parent, 0755, true) && !is_dir($parent)) {
+            routeguard_fail("cannot create payload parent: {$relative}");
+        }
+        $input = $zip->getStream($entry);
+        $output = fopen($target, 'wb');
+        if ($input === false || $output === false) {
+            if (is_resource($input)) fclose($input);
+            if (is_resource($output)) fclose($output);
+            routeguard_fail("cannot open payload entry: {$relative}");
+        }
+        $copied = stream_copy_to_stream($input, $output);
+        fclose($input);
+        fclose($output);
+        if ($copied === false) routeguard_fail("cannot write payload entry: {$relative}");
+        @chmod($target, 0644);
+    }
+}
+
 if (PHP_SAPI !== 'cli') {
     $provided = (string)($_GET['token'] ?? '');
     if (!hash_equals(ROUTEGUARD_FIX_TOKEN, $provided)) routeguard_fail('access denied.', 403);
@@ -144,12 +188,26 @@ routeguard_clear_public($publicRoot);
 echo "RouteGuard FIX: previous public files archived and cleared.\n";
 
 $zip = new ZipArchive();
-if ($zip->open($temporary) !== true || !$zip->extractTo($accountRoot)) {
+if ($zip->open($temporary) !== true) {
     @unlink($temporary);
-    routeguard_fail("extraction failed. Restore the backup: {$backup}");
+    routeguard_fail("cannot open the payload. Restore the backup: {$backup}");
 }
+routeguard_extract_payload($zip, $accountRoot);
 $zip->close();
 @unlink($temporary);
+
+$requiredFiles = [
+    $projectRoot . '/requirements.txt',
+    $projectRoot . '/manage.py',
+    $projectRoot . '/routeguard/settings.py',
+    $publicRoot . '/site.wsgi',
+];
+foreach ($requiredFiles as $requiredFile) {
+    if (!is_file($requiredFile)) {
+        routeguard_fail('required file was not extracted: ' . $requiredFile . ". Restore the backup: {$backup}");
+    }
+}
+echo "RouteGuard FIX: payload files extracted and verified.\n";
 
 if ($existingEnvironment !== null) {
     file_put_contents($environmentPath, $existingEnvironment, LOCK_EX);
