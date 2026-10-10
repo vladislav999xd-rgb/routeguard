@@ -44,11 +44,15 @@ $scp = (Get-Command scp.exe -ErrorAction Stop).Source
 $sshKeygen = (Get-Command ssh-keygen.exe -ErrorAction Stop).Source
 
 $keyDirectory = Split-Path -Parent $KeyPath
+$registrationMarker = "$KeyPath.registered-$SshUser-$SshHost"
 if (-not (Test-Path -LiteralPath $keyDirectory -PathType Container)) {
     New-Item -ItemType Directory -Path $keyDirectory -Force | Out-Null
 }
 
 if (-not (Test-Path -LiteralPath $KeyPath -PathType Leaf)) {
+    if (Test-Path -LiteralPath $registrationMarker -PathType Leaf) {
+        Remove-Item -LiteralPath $registrationMarker -Force
+    }
     Write-Host "Создаю отдельный SSH-ключ RouteGuard..." -ForegroundColor Cyan
     Invoke-NativeCommand -FailureMessage "Не удалось создать SSH-ключ" -Command {
         & $sshKeygen -q -t ed25519 -f $KeyPath -N '""' -C "routeguard-deploy"
@@ -70,37 +74,42 @@ $commonSshArguments = @(
 
 Write-Host "Проверяю SSH-доступ к $connection..." -ForegroundColor Cyan
 & $ssh @commonSshArguments -o BatchMode=yes -o ConnectTimeout=15 $connection "true" 2>$null
-$keyIsInstalled = $LASTEXITCODE -eq 0
+$passwordlessLoginWorks = $LASTEXITCODE -eq 0
 
-if (-not $keyIsInstalled) {
-    Write-Host "Первичная настройка: введите пароль от панели SprintHost один раз." -ForegroundColor Yellow
+if (-not $passwordlessLoginWorks -and -not (Test-Path -LiteralPath $registrationMarker -PathType Leaf)) {
+    Write-Host "Первичная настройка: введите пароль SprintHost, затем код подтверждения." -ForegroundColor Yellow
+    Write-Host "Пароль при вводе не отображается — это нормально." -ForegroundColor DarkGray
     $installKeyCommand = 'umask 077; mkdir -p "$HOME/.ssh"; touch "$HOME/.ssh/authorized_keys"; key=$(cat); grep -qxF "$key" "$HOME/.ssh/authorized_keys" || printf "%s\n" "$key" >> "$HOME/.ssh/authorized_keys"; chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"'
-    Get-Content -LiteralPath $publicKeyPath -Raw | & $ssh -p $Port -o StrictHostKeyChecking=accept-new -o "PreferredAuthentications=password,keyboard-interactive" -o PubkeyAuthentication=no $connection $installKeyCommand
+    Get-Content -LiteralPath $publicKeyPath -Raw | & $ssh -p $Port -o StrictHostKeyChecking=accept-new -o "PreferredAuthentications=keyboard-interactive,password" -o PubkeyAuthentication=no $connection $installKeyCommand
     if ($LASTEXITCODE -ne 0) {
-        throw "Не удалось добавить SSH-ключ на SprintHost. Проверьте логин аккаунта и пароль от панели."
+        throw "Не удалось добавить SSH-ключ. Проверьте логин, пароль и код подтверждения SprintHost."
     }
+    Set-Content -LiteralPath $registrationMarker -Value ([DateTime]::UtcNow.ToString("O")) -Encoding ASCII
 
-    Invoke-NativeCommand -FailureMessage "SSH-ключ добавлен, но вход по нему не работает" -Command {
-        & $ssh @commonSshArguments -o BatchMode=yes -o ConnectTimeout=15 $connection "true"
-    }
+    & $ssh @commonSshArguments -o BatchMode=yes -o ConnectTimeout=15 $connection "true" 2>$null
+    $passwordlessLoginWorks = $LASTEXITCODE -eq 0
 }
 
 $remoteFixDirectory = "domains/$Domain/public_html/FIX"
 $remoteFixPath = "$remoteFixDirectory/fix.php"
+$remoteUploadPath = "domains/$Domain/public_html/.routeguard-fix-upload.php"
+$authenticationArguments = @()
 
-Write-Host "Подготавливаю папку FIX на хостинге..." -ForegroundColor Cyan
-Invoke-NativeCommand -FailureMessage "Не удалось создать удалённую папку FIX" -Command {
-    & $ssh @commonSshArguments -o BatchMode=yes $connection "umask 077; mkdir -p '$remoteFixDirectory'"
+if ($passwordlessLoginWorks) {
+    $authenticationArguments = @("-o", "BatchMode=yes")
+} else {
+    Write-Host "SprintHost требует подтверждение SSH-входа." -ForegroundColor Yellow
+    Write-Host "Во время загрузки и запуска введите запрошенный код подтверждения." -ForegroundColor Yellow
 }
 
 Write-Host "Загружаю единый установщик (архив отдельно не нужен)..." -ForegroundColor Cyan
 Invoke-NativeCommand -FailureMessage "Не удалось загрузить FIX/fix.php" -Command {
-    & $scp -i $KeyPath -P $Port -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new $fixPath "${connection}:$remoteFixPath"
+    & $scp -i $KeyPath -P $Port -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new @authenticationArguments $fixPath "${connection}:$remoteUploadPath"
 }
 
 Write-Host "Запускаю автоматическую установку RouteGuard..." -ForegroundColor Green
 Invoke-NativeCommand -FailureMessage "Установщик RouteGuard завершился с ошибкой" -Command {
-    & $ssh @commonSshArguments -o BatchMode=yes -t $connection "php '$remoteFixPath'"
+    & $ssh @commonSshArguments @authenticationArguments -t $connection "umask 077; mkdir -p '$remoteFixDirectory'; mv -f '$remoteUploadPath' '$remoteFixPath'; chmod 600 '$remoteFixPath'; php '$remoteFixPath'"
 }
 
 Write-Host "Проверяю адрес приложения..." -ForegroundColor Cyan
