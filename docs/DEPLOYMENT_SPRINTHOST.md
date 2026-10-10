@@ -1,6 +1,24 @@
 # Развёртывание RouteGuard v2 на SprintHost
 
-Архив `routeguard-v2-sprinthost.zip` загружается **рядом с `public_html`**, в корень аккаунта, и распаковывается там. Внутри уже лежат две папки: `routeguard_app` (закрытое приложение и `.env`) и `public_html` (WSGI-точка входа и статические файлы).
+Основной способ установки — один локальный файл `FIX/fix.php`. Загрузите его в такое же место на сервере — `public_html/FIX/fix.php` — и запустите один раз через SSH. Полный архив `routeguard-v2-sprinthost.zip` остаётся запасным способом ручного развёртывания рядом с `public_html`.
+
+## Полностью автоматический SSH-деплой из Windows
+
+Запустите двойным щелчком `DEPLOY-TO-HOSTING.cmd` в корне проекта. Скрипт сам:
+
+- создаст отдельный ключ `~/.ssh/routeguard_sprinthost_ed25519`;
+- при первом запуске добавит его в SprintHost — для этого потребуются пароль от панели и код подтверждения;
+- создаст удалённую папку `public_html/FIX`;
+- загрузит встроенный установщик и запустит его;
+- проверит `https://irbitdp.ru/api/health/`.
+
+Если SprintHost разрешает вход по ключу без дополнительной проверки, повторные обновления выполняются без пароля и кода. Если подтверждение обязательно для каждого SSH-сеанса, скрипт запросит код во время загрузки и запуска, но остальные действия выполнит автоматически. По умолчанию используются SSH-логин `a1239227` и домен `irbitdp.ru`. Если логин аккаунта отличается, запустите:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy_via_ssh.ps1 -SshUser ВАШ_ЛОГИН
+```
+
+Переносить `routeguard-v2-sprinthost.zip` при этом не нужно: его содержимое уже встроено в локальный `FIX/fix.php`.
 
 > Перед распаковкой сделайте копию существующего `public_html` и экспорт базы. Не удаляйте PHP-версию до smoke-check v2.
 
@@ -8,29 +26,29 @@
 
 Выбраны Python 3.11, Django 5.2 LTS и PostgreSQL 14. SprintHost документирует Python-приложения через Apache/uWSGI и поддержку этих версий. Node.js в production не нужен: React уже собран в статические файлы.
 
-## Установка
+## Автоматическая установка
 
-1. Загрузите архив в корень аккаунта — на один уровень выше `public_html`.
-2. Распакуйте его с объединением папки `public_html`, не удаляя резервную копию.
-3. По SSH выполните (замените `/home/LOGIN` на путь аккаунта):
-
-```bash
-cd /home/LOGIN/routeguard_app
-python3.11 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/python manage.py migrate
-DJANGO_STATIC_ROOT=/home/LOGIN/public_html/static .venv/bin/python manage.py collectstatic --noinput
-.venv/bin/python manage.py create_workspace --name "RouteGuard" --username OWNER --password 'UNIQUE-LONG-PASSWORD'
-chmod 755 /home/LOGIN/public_html/site.wsgi
-```
-
-4. Проверьте путь к virtualenv в `public_html/site.wsgi`. Шаблон ищет `routeguard_app/.venv` автоматически.
-5. Откройте сайт по HTTPS. Проверьте `/api/health/`, лендинг, демо и вход сотрудника.
-6. Добавьте cron-задачу раз в сутки:
+1. Создайте PostgreSQL 14 и передайте реквизиты сборщику приватного релиза.
+2. В файловом менеджере создайте `public_html/FIX` и загрузите туда локальный `FIX/fix.php`.
+3. По SSH выполните одну команду из каталога домена:
 
 ```bash
-/home/LOGIN/routeguard_app/.venv/bin/python /home/LOGIN/routeguard_app/manage.py cleanup_demo
+php ~/domains/DOMAIN/public_html/FIX/fix.php
 ```
+
+Установщик самостоятельно:
+
+- делает ZIP-копию прежних `public_html` и `routeguard_app`;
+- проверяет SHA-256 встроенного payload и распаковывает приложение;
+- сохраняет существующий `.env` при обновлении;
+- находит Python 3.11 и создаёт `.venv`;
+- устанавливает зависимости, выполняет `migrate` и `collectstatic`;
+- создаёт постоянное пространство и владельца со случайным паролем;
+- сохраняет логин и пароль вне публичной папки в `routeguard_app/OWNER-CREDENTIALS.txt`;
+- запускает production-check и перезапускает WSGI касанием `site.wsgi`.
+
+4. Один раз в панели SprintHost выберите для домена `Python 3.11 / uWSGI`. Эта настройка принадлежит панели хостинга и не изменяется файловым установщиком.
+5. Откройте сайт по HTTPS и проверьте `/api/health/`, главную страницу и демо.
 
 ## База и секреты
 
@@ -46,17 +64,17 @@ chmod 755 /home/LOGIN/public_html/site.wsgi
 - P002 занимает только один будущий слот;
 - в браузере нет 500 и ошибок console;
 - `https://DOMAIN/.env` и `/routeguard_app/` недоступны;
-- страницы не имеют общей горизонтальной прокрутки на 390/768/1440 px.
+- страницы не имеют общей горизонтальной прокрутки на 390/768/1280/1440 px.
 
 ## Обновление и FIX
 
-В архиве находится `public_html/FIX/fix.php` — один самодостаточный PHP-файл с текущим файловым payload и контрольной SHA-256. Он создаёт резервную копию затрагиваемых файлов и распаковывает версию в корень аккаунта. Предпочтительный запуск по SSH:
+Для обновления загрузите новый локальный `FIX/fix.php` поверх серверного файла и снова запустите:
 
 ```bash
-php /home/LOGIN/public_html/FIX/fix.php
+php ~/domains/DOMAIN/public_html/FIX/fix.php
 ```
 
-Веб-запуск требует случайный токен, напечатанный сборщиком архива. После файлового обновления всё равно вручную выполните `pip install`, `migrate`, `collectstatic`, smoke-check и удалите/закройте веб-доступ к fixer до следующего релиза.
+Повторный запуск идемпотентен: настройки базы и существующий владелец сохраняются, а миграции применяются только при необходимости. Каталог `FIX` закрывается от веб-доступа через собственный `.htaccess`; предпочтителен только запуск по SSH.
 
 ## Откат
 

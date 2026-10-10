@@ -6,6 +6,7 @@
 /screenshots/*profile*/
 /FIX/backups/
 /FIX/.applied-*
+/FIX/fix.php
 /.env
 /.env.*
 !/.env.example

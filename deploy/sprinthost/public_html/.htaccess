@@ -1,14 +1,13 @@
-Options -Indexes
+Options +ExecCGI -Indexes
 DirectoryIndex site.wsgi
 AddHandler wsgi-script .wsgi
 
 RewriteEngine On
 RewriteRule (^|/)\. - [F,L]
 RewriteRule ^routeguard_app(?:/|$) - [F,L]
-RewriteCond %{REQUEST_FILENAME} -f [OR]
-RewriteCond %{REQUEST_FILENAME} -d
-RewriteRule ^ - [L]
-RewriteRule ^(.*)$ site.wsgi/$1 [QSA,PT,L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ /site.wsgi/$1 [QSA,PT,L]
 
 <IfModule mod_headers.c>
   Header always set X-Content-Type-Options "nosniff"

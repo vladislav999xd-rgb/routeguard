@@ -20,7 +20,7 @@ from .exceptions import DomainError
 from .models import Appointment, Comment, Employee, Membership, Route, RouteStep, ScheduleSlot, Study, Task, Workspace
 from .serializers import EmployeeSerializer, RouteDetailSerializer, RouteListSerializer, SlotSerializer, TaskSerializer
 from .services import add_document, assign_route, author_name, audit, book_slot, complete_step, confirm_route, priority_info, save_contact
-from .workspace import get_workspace
+from .workspace import cleanup_expired_demo_workspaces, get_workspace
 
 
 @api_view(["GET"])
@@ -56,6 +56,7 @@ def session_view(request):
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def demo_open(request):
+    cleanup_expired_demo_workspaces()
     old = get_workspace(request, required=False)
     if old and old.kind == Workspace.Kind.DEMO:
         return Response(session_payload(request, old))
@@ -105,7 +106,13 @@ def dashboard(request):
     attention_counts = {item["attention_reason"] or "none": item["total"] for item in Route.objects.filter(workspace=workspace).values("attention_reason").annotate(total=Count("id"))}
     today = workspace.demo_date if workspace.kind == Workspace.Kind.DEMO else timezone.localdate()
     task_count = Task.objects.filter(workspace=workspace, status=Task.Status.OPEN, due_at__date__lte=today).count()
-    return Response({"summary": {"total": len(routes), "active": len(active), "completed": status_counts.get("completed", 0), "attention": sum(1 for route in active if route.attention_reason), "tasks_due": task_count}, "status_counts": status_counts, "attention_counts": attention_counts, "priority_routes": RouteListSerializer(prioritized, many=True).data})
+    calls_today = Task.objects.filter(
+        workspace=workspace,
+        status=Task.Status.OPEN,
+        kind=Task.Kind.CALLBACK,
+        due_at__date=today,
+    ).count()
+    return Response({"summary": {"total": len(routes), "active": len(active), "completed": status_counts.get("completed", 0), "attention": sum(1 for route in active if route.attention_reason), "tasks_due": task_count, "calls_today": calls_today}, "status_counts": status_counts, "attention_counts": attention_counts, "priority_routes": RouteListSerializer(prioritized, many=True).data})
 
 
 @api_view(["GET", "POST"])

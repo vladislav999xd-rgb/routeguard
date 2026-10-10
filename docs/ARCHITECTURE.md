@@ -6,6 +6,8 @@
 flowchart TB
     subgraph Browser[Браузер]
       UI[React SPA]
+      LANDING[Семантический 3D-лендинг]
+      WEBGL[Three.js / R3F]
       SESSION[Защищённая cookie-сессия]
     end
     subgraph Application[Django 5.2 LTS]
@@ -19,6 +21,8 @@ flowchart TB
       DATA[(Маршруты и справочники)]
       LOCKS[(Ограничения и блокировки)]
     end
+    LANDING --> WEBGL
+    LANDING -->|POST + CSRF| API
     UI --> API
     SESSION --> API
     API --> DOMAIN
@@ -42,6 +46,9 @@ Frontend собирается локально Vite и на production отда�
 | `core/views.py` | HTTP-контракт, фильтры и проверка границ workspace |
 | `frontend/src/App.tsx` | пользовательский путь и состояния UI |
 | `frontend/src/api.ts` | единый клиент API и CSRF |
+| `frontend/src/landing/LandingExperience.tsx` | семь семантических сцен, CTA, responsive и fallback |
+| `frontend/src/landing/RouteScene.tsx` | процедурная 3D-линия, станции, освещение и camera-on-rail |
+| `frontend/src/landing/storyMotion.ts` | lazy-loaded GSAP ScrollTrigger, scroll-scrub и переходы DOM-сцен |
 
 ## Ключевые инварианты
 
