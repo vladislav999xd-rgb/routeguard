@@ -97,10 +97,10 @@ $commonSshArguments = @(
 Write-Host "Проверяю SSH-доступ к $connection..." -ForegroundColor Cyan
 $passwordlessLoginWorks = Test-SshKeyLogin -SshExecutable $ssh -SshArguments $commonSshArguments -Connection $connection
 
-if (-not $passwordlessLoginWorks -and -not (Test-Path -LiteralPath $registrationMarker -PathType Leaf)) {
-    Write-Host "Первичная настройка: введите пароль SprintHost, затем код подтверждения." -ForegroundColor Yellow
+if (-not $passwordlessLoginWorks) {
+    Write-Host "Настройка SSH-ключа: введите пароль SprintHost, затем код подтверждения." -ForegroundColor Yellow
     Write-Host "Пароль при вводе не отображается — это нормально." -ForegroundColor DarkGray
-    $installKeyCommand = 'umask 077; mkdir -p $HOME/.ssh; cat >> $HOME/.ssh/authorized_keys; chmod 700 $HOME/.ssh; chmod 600 $HOME/.ssh/authorized_keys'
+    $installKeyCommand = 'umask 077; mkdir -p "$HOME/.ssh"; touch "$HOME/.ssh/authorized_keys"; IFS= read -r key_line; grep -qxF "$key_line" "$HOME/.ssh/authorized_keys" || printf "%s\n" "$key_line" >> "$HOME/.ssh/authorized_keys"; chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"'
     Get-Content -LiteralPath $publicKeyPath -Raw | & $ssh -p $Port -o StrictHostKeyChecking=accept-new -o "PreferredAuthentications=keyboard-interactive,password" -o PubkeyAuthentication=no $connection $installKeyCommand
     if ($LASTEXITCODE -ne 0) {
         throw "Не удалось добавить SSH-ключ. Проверьте логин, пароль и код подтверждения SprintHost."
