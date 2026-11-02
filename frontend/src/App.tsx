@@ -93,6 +93,16 @@ type Task = {
   status: string
   assignee_name: string | null
 }
+type ContactResult = {
+  id: number
+  outcome: string
+  outcome_label: string
+  note: string
+  callback_at: string | null
+  employee: number | null
+  employee_name: string | null
+  created_at: string
+}
 type RouteDetail = RouteRow & {
   conclusion: string
   study_date: string
@@ -110,6 +120,7 @@ type RouteDetail = RouteRow & {
   tasks: Task[]
   events: Array<{ id: number; message: string; author: string; occurred_at: string; demo_date: string }>
   comments: Array<{ id: number; author: string; body: string; created_at: string }>
+  contacts: ContactResult[]
   call_assistant: {
     scenario: string
     goal: string
@@ -122,6 +133,9 @@ type RouteDetail = RouteRow & {
     closing: string
     full_text: string
     disclaimer: string
+    contact_attempts: number
+    last_contact: null | Pick<ContactResult, 'id' | 'outcome' | 'outcome_label' | 'note' | 'callback_at' | 'created_at'>
+    next_task: null | Pick<Task, 'id' | 'kind' | 'title' | 'due_at'>
   }
 }
 type DashboardData = {
@@ -173,6 +187,11 @@ function addDays(value: string, days: number) {
   const date = new Date(`${value}T12:00:00`)
   date.setDate(date.getDate() + days)
   return date.toISOString().slice(0, 10)
+}
+
+function futureLocalDateTimeMin() {
+  const date = new Date(Date.now() + 60_000)
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
 }
 
 function Loading({ rows = 5 }: { rows?: number }) {
@@ -418,7 +437,12 @@ function RouteDetailPage() {
     setMessage('')
     try { await fn(); setMessage(success); reload() } catch (reason) { setMessage((reason as Error).message) } finally { setBusy(false) }
   }
-  return <><div className="detail-head"><NavLink to="/app/routes" className="back"><ArrowLeft />Все маршруты</NavLink><div><span>{route.patient_code} · {route.study_type}</span><h1>{route.patient_name}</h1><p>Исследование от {formatDate(route.study_date)} · срок маршрута {formatDate(route.due_date)}</p></div><PriorityBadge priority={route.priority} /></div>{message && <div className={message.includes('Не ') || message.includes('нельзя') ? 'notice error-notice' : 'notice'}>{message}</div>}<div className="detail-grid"><div className="detail-main"><section className="panel"><PanelHead title="Маршрут" />{route.status === 'draft' && <button disabled={busy} className="button primary" onClick={() => act(() => post(`/routes/${id}/confirm/`), 'Маршрут подтверждён')}>Подтвердить маршрут</button>}<div className="timeline">{route.steps.map((step, index) => <StepCard key={step.id} step={step} index={index} onDone={() => act(() => post(`/steps/${step.id}/complete/`), 'Шаг выполнен')} onDocument={() => act(() => post(`/steps/${step.id}/documents/`, { label: 'Синтетическое подтверждение' }), 'Подтверждение добавлено')} onBook={reload} />)}</div></section><section className="panel"><PanelHead title="Заключение исследования" /><div className="clinical-note"><ShieldCheck /><p>{route.conclusion}</p></div><small className="muted">RouteGuard не интерпретирует клинические данные и не формирует медицинские рекомендации.</small></section><section className="panel"><PanelHead title="Комментарии" /><CommentForm routeId={route.id} onSaved={reload} />{route.comments.map((comment) => <div className="comment" key={comment.id}><b>{comment.author}</b><p>{comment.body}</p><small>{formatDate(comment.created_at, true)}</small></div>)}</section><section className="panel"><PanelHead title="История действий" /><div className="history">{route.events.map((event) => <div key={event.id}><i /><div><b>{event.message}</b><span>{event.author} · {formatDate(event.occurred_at, true)}</span></div></div>)}</div></section></div><aside className="detail-side"><section className="panel sticky"><div className="assistant-title"><span><PhoneCall /></span><div><small>Помощник звонка</small><h2>{route.call_assistant.scenario}</h2></div></div><p>{route.call_assistant.goal}</p><div className="script"><small>Начало разговора</small><p>{route.call_assistant.opening}</p><small>Уточнить</small><ul>{route.call_assistant.questions.map((question) => <li key={question}>{question}</li>)}</ul><small>Предложение</small><p>{route.call_assistant.offer}</p></div><CallResult routeId={route.id} onSaved={reload} /><p className="disclaimer">{route.call_assistant.disclaimer}</p></section><section className="panel"><h2>Ответственный</h2><select value={route.assignee ?? ''} onChange={(event) => act(() => post(`/routes/${id}/assign/`, { employee_id: Number(event.target.value) }), 'Ответственный назначен')}><option value="">Не назначен</option>{employees?.map((employee) => <option key={employee.id} value={employee.id}>{employee.full_name}</option>)}</select></section>{route.patient_code === 'P015' && <section className="panel integrity"><ShieldCheck /><h2>Проверка защиты от дубля</h2><p>Попытка создать второй активный маршрут по тому же исследованию должна быть отклонена.</p><button className="button secondary" onClick={() => act(() => post('/routes/', { study_id: route.study_id }), 'Ошибка: дубль неожиданно создан')}>Проверить ограничение</button></section>}</aside></div></>
+  const currentStepIndex = route.steps.findIndex((step) => step.status !== 'completed')
+  return <><div className="detail-head"><NavLink to="/app/routes" className="back"><ArrowLeft />Все маршруты</NavLink><div><span>{route.patient_code} · {route.study_type}</span><h1>{route.patient_name}</h1><p>Исследование от {formatDate(route.study_date)} · срок маршрута {formatDate(route.due_date)}</p></div><PriorityBadge priority={route.priority} /></div>{message && <div className={message.includes('Не ') || message.includes('нельзя') ? 'notice error-notice' : 'notice'}>{message}</div>}<div className="detail-grid"><div className="detail-main"><section className="panel"><PanelHead title="Маршрут" />{route.status === 'draft' && <button disabled={busy} className="button primary" onClick={() => act(() => post(`/routes/${id}/confirm/`), 'Маршрут подтверждён')}>Подтвердить маршрут</button>}<div className="timeline">{route.steps.map((step, index) => <StepCard key={step.id} step={step} index={index} routeStatus={route.status} isCurrent={index === currentStepIndex} onDone={() => act(() => post(`/steps/${step.id}/complete/`), 'Шаг выполнен')} onDocument={() => act(() => post(`/steps/${step.id}/documents/`, { label: 'Синтетическое подтверждение' }), 'Подтверждение добавлено')} onBook={reload} />)}</div></section><section className="panel"><PanelHead title="Заключение исследования" /><div className="clinical-note"><ShieldCheck /><p>{route.conclusion}</p></div><small className="muted">RouteGuard не интерпретирует клинические данные и не формирует медицинские рекомендации.</small></section><section className="panel"><PanelHead title="Комментарии" /><CommentForm routeId={route.id} onSaved={reload} />{route.comments.map((comment) => <div className="comment" key={comment.id}><b>{comment.author}</b><p>{comment.body}</p><small>{formatDate(comment.created_at, true)}</small></div>)}</section><ContactHistory contacts={route.contacts} /><section className="panel"><PanelHead title="История действий" /><div className="history">{route.events.map((event) => <div key={event.id}><i /><div><b>{event.message}</b><span>{event.author} · {formatDate(event.occurred_at, true)}</span></div></div>)}</div></section></div><aside className="detail-side"><section className="panel sticky"><div className="assistant-title"><span><PhoneCall /></span><div><small>Помощник звонка</small><h2>{route.call_assistant.scenario}</h2></div></div><p>{route.call_assistant.goal}</p><div className="script"><small>Начало разговора</small><p>{route.call_assistant.opening}</p><small>Уточнить</small><ul>{route.call_assistant.questions.map((question) => <li key={question}>{question}</li>)}</ul><small>Предложение</small><p>{route.call_assistant.offer}</p></div><CallResult routeId={route.id} onSaved={reload} /><p className="disclaimer">{route.call_assistant.disclaimer}</p></section><section className="panel"><h2>Ответственный</h2><select value={route.assignee ?? ''} onChange={(event) => act(() => post(`/routes/${id}/assign/`, { employee_id: Number(event.target.value) }), 'Ответственный назначен')}><option value="">Не назначен</option>{employees?.map((employee) => <option key={employee.id} value={employee.id}>{employee.full_name}</option>)}</select></section>{route.patient_code === 'P015' && <section className="panel integrity"><ShieldCheck /><h2>Проверка защиты от дубля</h2><p>Попытка создать второй активный маршрут по тому же исследованию должна быть отклонена.</p><button className="button secondary" onClick={() => act(() => post('/routes/', { study_id: route.study_id }), 'Ошибка: дубль неожиданно создан')}>Проверить ограничение</button></section>}</aside></div></>
+}
+
+function ContactHistory({ contacts }: { contacts: ContactResult[] }) {
+  return <section className="panel"><PanelHead title="История контактов" />{contacts.length ? <div className="contact-history">{contacts.map((contact) => <article key={contact.id}><div className="contact-history-head"><span className="contact-outcome"><Phone size={14} />{contact.outcome_label}</span><time dateTime={contact.created_at}>{formatDate(contact.created_at, true)}</time></div>{contact.note && <p>{contact.note}</p>}<div className="contact-meta"><span><UserRound size={14} />{contact.employee_name || 'Сотрудник не указан'}</span>{contact.callback_at && <span><Clock3 size={14} />Перезвонить {formatDate(contact.callback_at, true)}</span>}</div></article>)}</div> : <p className="panel-empty">Контактов с пациентом пока не зафиксировано.</p>}</section>
 }
 
 function PanelHead({ title, link }: { title: string; link?: string }) {
@@ -429,12 +453,16 @@ function PriorityBadge({ priority }: { priority: Priority }) {
   return <span className={`priority ${priority.level}`} title={priority.reason}><i />{priority.label}</span>
 }
 
-function StepCard({ step, index, onDone, onDocument, onBook }: { step: RouteDetail['steps'][number]; index: number; onDone: () => void; onDocument: () => void; onBook: () => void }) {
+function StepCard({ step, index, routeStatus, isCurrent, onDone, onDocument, onBook }: { step: RouteDetail['steps'][number]; index: number; routeStatus: string; isCurrent: boolean; onDone: () => void; onDocument: () => void; onBook: () => void }) {
   const [showSlots, setShowSlots] = useState(false)
   const { data: slots, error, reload } = useLoad<Slot[]>(() => api(`/schedule/?service=${step.service}&available=1`), [step.service])
   const [booking, setBooking] = useState(false)
   const [notice, setNotice] = useState('')
   const scheduled = step.appointments.find((appointment) => appointment.status === 'scheduled')
+  const previousAppointments = step.appointments.filter((appointment) => ['cancelled', 'missed', 'completed'].includes(appointment.status))
+  const canAct = routeStatus === 'active' && isCurrent && step.status !== 'completed'
+  const isFuture = routeStatus === 'active' && !isCurrent && step.status !== 'completed'
+  const appointmentStatus: Record<string, string> = { cancelled: 'Отменена', missed: 'Неявка', completed: 'Завершена' }
   const book = async (slotId: number) => {
     setBooking(true)
     try { await post(`/steps/${step.id}/book/`, { slot_id: slotId }, { 'Idempotency-Key': crypto.randomUUID() }); setNotice('Запись подтверждена'); setShowSlots(false); reload(); onBook() } catch (reason) { setNotice((reason as Error).message) } finally { setBooking(false) }
@@ -443,7 +471,7 @@ function StepCard({ step, index, onDone, onDocument, onBook }: { step: RouteDeta
     setBooking(true)
     try { await post(`/appointments/${appointmentId}/status/`, { status, reason: status === 'cancelled' ? 'Отменено координатором' : 'Пациент не пришёл' }); setNotice(status === 'cancelled' ? 'Запись отменена, шаг возвращён в работу' : 'Неявка сохранена, шаг возвращён в работу'); onBook() } catch (reason) { setNotice((reason as Error).message) } finally { setBooking(false) }
   }
-  return <article className={`step ${step.status}`}><div className="step-index">{step.status === 'completed' ? <Check /> : index + 1}</div><div className="step-body"><div className="step-top"><div><span>{step.service_name}</span><h3>{step.title}</h3></div><span className="status-chip">{step.status === 'completed' ? 'Выполнен' : step.status === 'scheduled' ? 'Запланирован' : 'Ожидает'}</span></div><p className="muted">Срок: {formatDate(step.due_date)}</p>{scheduled && <div className="appointment"><CalendarDays /><div><b>{formatDate(scheduled.slot.starts_at, true)}</b><span>{scheduled.slot.facility_name} · {scheduled.slot.specialist_name}</span></div></div>}{step.documents.map((document) => <div className="document" key={document.id}><Check />{document.label}</div>)}{notice && <p className="inline-note">{notice}</p>}<div className="step-actions">{step.status === 'pending' && <button className="button secondary small" onClick={() => setShowSlots(!showSlots)}>Выбрать слот</button>}{step.status !== 'completed' && <button className="button ghost small" onClick={onDone}>Отметить выполненным</button>}{scheduled && <button disabled={booking} className="button ghost small danger" onClick={() => updateAppointment(scheduled.id, 'cancelled')}>Отменить запись</button>}{scheduled && <button disabled={booking} className="button ghost small" onClick={() => updateAppointment(scheduled.id, 'missed')}>Отметить неявку</button>}{step.status === 'completed' && step.confirmation_required && !step.documents.length && <button className="button secondary small" onClick={onDocument}>Добавить подтверждение</button>}</div>{showSlots && <div className="slot-picker"><b>Свободное время</b>{error ? <ErrorState error={error} /> : !slots ? <Loading rows={2} /> : slots.length ? slots.slice(0, 8).map((slot) => <button disabled={booking} onClick={() => book(slot.id)} key={slot.id}><span><b>{formatDate(slot.starts_at, true)}</b><small>{slot.facility_name} · {slot.specialist_name}</small></span><ChevronRight /></button>) : <Empty text="Свободных слотов нет" />}</div>}</div></article>
+  return <article className={`step ${step.status}`}><div className="step-index">{step.status === 'completed' ? <Check /> : index + 1}</div><div className="step-body"><div className="step-top"><div><span>{step.service_name}</span><h3>{step.title}</h3></div><span className="status-chip">{step.status === 'completed' ? 'Выполнен' : step.status === 'scheduled' ? 'Запланирован' : 'Ожидает'}</span></div><p className="muted">Срок: {formatDate(step.due_date)}</p>{scheduled && <div className="appointment"><CalendarDays /><div><b>{formatDate(scheduled.slot.starts_at, true)}</b><span>{scheduled.slot.facility_name} · {scheduled.slot.specialist_name}</span></div></div>}{previousAppointments.length > 0 && <div className="appointment-history"><b>История записей</b>{previousAppointments.map((appointment) => <div key={appointment.id}><span className={`appointment-status ${appointment.status}`}>{appointmentStatus[appointment.status] || appointment.status}</span><span><time dateTime={appointment.slot.starts_at}>{formatDate(appointment.slot.starts_at, true)}</time><small>{appointment.slot.facility_name}{appointment.reason ? ` · ${appointment.reason}` : ''}</small></span></div>)}</div>}{step.documents.map((document) => <div className="document" key={document.id}><Check />{document.label}</div>)}{notice && <p className="inline-note" role="status">{notice}</p>}{isFuture && <p className="step-lock"><Clock3 />Сначала завершите предыдущий этап.</p>}{routeStatus === 'draft' && step.status !== 'completed' && <p className="step-lock"><Clock3 />Действия станут доступны после подтверждения маршрута.</p>}<div className="step-actions">{canAct && step.status === 'pending' && <button className="button secondary small" onClick={() => setShowSlots(!showSlots)}>Выбрать слот</button>}{canAct && <button className="button ghost small" onClick={onDone}>Отметить выполненным</button>}{canAct && scheduled && <button disabled={booking} className="button ghost small danger" onClick={() => updateAppointment(scheduled.id, 'cancelled')}>Отменить запись</button>}{canAct && scheduled && <button disabled={booking} className="button ghost small" onClick={() => updateAppointment(scheduled.id, 'missed')}>Отметить неявку</button>}{isFuture && step.status === 'pending' && <button className="button secondary small" disabled>Выбрать слот</button>}{isFuture && <button className="button ghost small" disabled>Отметить выполненным</button>}{routeStatus === 'active' && step.status === 'completed' && step.confirmation_required && !step.documents.length && <button className="button secondary small" onClick={onDocument}>Добавить подтверждение</button>}</div>{canAct && showSlots && <div className="slot-picker"><b>Свободное время</b>{error ? <ErrorState error={error} /> : !slots ? <Loading rows={2} /> : slots.length ? slots.slice(0, 8).map((slot) => <button disabled={booking} onClick={() => book(slot.id)} key={slot.id}><span><b>{formatDate(slot.starts_at, true)}</b><small>{slot.facility_name} · {slot.specialist_name}</small></span><ChevronRight /></button>) : <Empty text="Свободных слотов нет" />}</div>}</div></article>
 }
 
 function CommentForm({ routeId, onSaved }: { routeId: number; onSaved: () => void }) {
@@ -461,13 +489,35 @@ function CallResult({ routeId, onSaved }: { routeId: number; onSaved: () => void
   const [outcome, setOutcome] = useState('reached')
   const [note, setNote] = useState('')
   const [callback, setCallback] = useState('')
-  const [state, setState] = useState('')
+  const [state, setState] = useState<{ message: string; error: boolean }>({ message: '', error: false })
+  const [submitting, setSubmitting] = useState(false)
+  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID())
+  useEffect(() => {
+    setOutcome('reached')
+    setNote('')
+    setCallback('')
+    setState({ message: '', error: false })
+    setIdempotencyKey(crypto.randomUUID())
+  }, [routeId])
   const submit = async (event: FormEvent) => {
     event.preventDefault()
-    setState('Сохраняем…')
-    try { await post(`/routes/${routeId}/contact/`, { outcome, note, callback_at: callback || null }); setState('Результат сохранён'); setNote(''); onSaved() } catch (reason) { setState((reason as Error).message) }
+    if (submitting) return
+    setSubmitting(true)
+    setState({ message: 'Сохраняем…', error: false })
+    try {
+      await post(`/routes/${routeId}/contact/`, { outcome, note, callback_at: callback || null }, { 'Idempotency-Key': idempotencyKey })
+      setState({ message: 'Результат сохранён', error: false })
+      setNote('')
+      setCallback('')
+      setIdempotencyKey(crypto.randomUUID())
+      onSaved()
+    } catch (reason) {
+      setState({ message: (reason as Error).message, error: true })
+    } finally {
+      setSubmitting(false)
+    }
   }
-  return <form className="call-result" onSubmit={submit}><label>Результат разговора<select value={outcome} onChange={(event) => setOutcome(event.target.value)}><option value="reached">Контакт установлен</option><option value="slot_agreed">Время согласовано</option><option value="callback">Перезвонить</option><option value="no_answer">Нет ответа</option><option value="declined">Отказ от разговора</option></select></label>{outcome === 'callback' && <label>Когда перезвонить<input required type="datetime-local" value={callback} onChange={(event) => setCallback(event.target.value)} /></label>}<label>Комментарий<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Кратко зафиксируйте договорённость" /></label><button className="button primary" type="submit">Сохранить результат</button>{state && <small>{state}</small>}</form>
+  return <form className="call-result" onSubmit={submit}><label>Результат разговора<select disabled={submitting} value={outcome} onChange={(event) => setOutcome(event.target.value)}><option value="reached">Контакт установлен</option><option value="slot_agreed">Время согласовано</option><option value="callback">Перезвонить</option><option value="no_answer">Нет ответа</option><option value="declined">Отказ от разговора</option></select></label>{outcome === 'callback' && <label>Когда перезвонить<input required disabled={submitting} min={futureLocalDateTimeMin()} type="datetime-local" value={callback} onChange={(event) => setCallback(event.target.value)} /></label>}<label>Комментарий<textarea disabled={submitting} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Кратко зафиксируйте договорённость" /></label><button disabled={submitting} className="button primary" type="submit">{submitting ? 'Сохраняем…' : 'Сохранить результат'}</button>{state.message && <small className={state.error ? 'form-message error' : 'form-message'} role={state.error ? 'alert' : 'status'} aria-live="polite">{state.message}</small>}</form>
 }
 
 function TasksPage() {
@@ -484,7 +534,7 @@ function SchedulePage() {
   return <><PageHead eyebrow="Доступность" title="Расписание" text="Слоты специалистов и площадок. Прошедшее время при записи отклоняется сервером." /><div className="tabs"><button className={status === 'free' ? 'active' : ''} onClick={() => setStatus('free')}>Свободные</button><button className={status === 'busy' ? 'active' : ''} onClick={() => setStatus('busy')}>Занятые</button></div>{error ? <ErrorState error={error} retry={reload} /> : !data ? <Loading /> : <div className="schedule-grid">{Object.entries(grouped).slice(0, 12).map(([day, slots]) => <section className="panel day" key={day}><h2>{day}</h2>{slots.map((slot) => <div className="schedule-slot" key={slot.id}><time>{new Date(slot.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</time><div><b>{slot.service_name}</b><span>{slot.specialist_name}</span><small>{slot.facility_name}</small></div><span className={`availability ${slot.status}`}>{slot.status === 'free' ? 'Свободен' : 'Занят'}</span></div>)}</section>)}</div>}</>
 }
 
-const scenarioNotes = ['Черновик: требуется подтверждение', 'Активный маршрут: доступен слот', 'Будущая запись подтверждена', 'Приём назначен на демодату', 'Завершённый маршрут', 'Возврат после отмены пациентом', 'Неявка и задача координатору', 'Нет слота до срока', 'Просроченный шаг', 'Неполное заключение', 'Нет ответственного', 'Нет подтверждающего документа', 'Маршрут из двух шагов', 'Запрос на перенос', 'Защита от дубля', 'Согласование времени', 'Отмена клиникой', 'Альтернативная площадка', 'Два выполненных шага', 'Срок наступает завтра']
+const scenarioNotes = ['Черновик: требуется подтверждение', 'Активный маршрут: доступен слот', 'Будущая запись подтверждена', 'Приём назначен на демодату', 'Завершённый маршрут', 'Возврат после отмены пациентом', 'Неявка и задача координатору', 'Нет слота до срока', 'Просроченный шаг', 'Неполное заключение', 'Нет ответственного', 'Нет подтверждающего документа', 'Два шага: неявка и продолжение', 'Запрос на перенос', 'Защита от дубля', 'Согласование времени', 'Отмена клиникой', 'Альтернативная площадка', 'Два выполненных шага', 'Срок наступает завтра']
 
 function ScenariosPage() {
   const { data, error, reload } = useLoad<RouteRow[]>(() => api('/routes/'))

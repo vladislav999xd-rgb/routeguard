@@ -5,6 +5,6 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   base: '/static/app/',
   plugins: [react(), tailwindcss()],
-  build: { outDir: '../backend_static/app', emptyOutDir: true, sourcemap: true },
+  build: { outDir: '../backend_static/app', emptyOutDir: true, sourcemap: false },
   server: { proxy: { '/api': 'http://127.0.0.1:8000' } },
 })
