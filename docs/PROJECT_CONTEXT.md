@@ -56,7 +56,12 @@ Production layout:
 - Route confirmation and coordinator assignment.
 - Transactional slot booking with row locks, database constraints and an idempotency key.
 - Step completion, appointment cancellation/no-show and document confirmation.
-- Deterministic call assistant and callback task creation.
+- Active-route and required-step-order guards for booking and completion.
+- One reusable follow-up task after cancellation/no-show, closed after successful rebooking.
+- Deterministic call assistant, structured contact history and one updatable callback task.
+- Idempotent contact submission through `Idempotency-Key`.
+- Truthful seeded audit sequences for the synthetic route state instead of one summary event.
+- Workspace-scoped snapshot analytics with documented formulas.
 - Dashboard, route queue, route card, tasks, schedule and analytics views.
 - Responsive application and a separate presentation landing.
 - Private release builder, SSH uploader, backup creation, migrations, static collection and WSGI bootstrap.
@@ -72,27 +77,40 @@ Production layout:
 
 These collections must remain distinct in storage, even if the UI later presents a combined chronological timeline.
 
-## Confirmed P0 problems
+## P0 implementation in the current working tree
 
-1. Demo seeding creates complex state but only one `scenario_seeded` audit event per route. API and React do not truncate history; the missing source events cause the one-item history regression.
-2. `complete_step` and `book_slot` do not enforce an active route or ordered required steps.
-3. Cancellation and no-show set attention state but do not create a coordinator follow-up task.
-4. Repeated callback results can create duplicate open callback tasks; contact submission has no idempotency contract.
-5. `ContactResult` notes and callback dates are stored but not serialized in route detail or shown in the application.
-6. `POST /routes/` can create a route without steps.
-7. Workspace scoping is broadly present, but cross-workspace mutation attempts are not covered by API tests.
-8. Persistent membership roles are reported but not enforced for mutations.
-9. Dashboard attention metrics mix dynamic priority with stored `attention_reason`, so advancing demo time can produce inconsistent counts.
-10. URI-encoded database credentials from the release builder are not explicitly decoded by `database_config`.
+These changes are present locally and require the lead agent's final integrated test run before release:
 
-## Confirmed P1 gaps
+1. `core/demo.py` emits separate truthful events for route creation/confirmation, steps, appointments, documents, completed steps, tasks, comments and final scenario state. P019 no longer relies on one decorative summary.
+2. `book_slot` and `complete_step` require an active route and prevent moving past an earlier incomplete required step.
+3. Cancellation/no-show creates or reuses one open `follow_up`; successful rebooking marks it done.
+4. Callback time must be in the future. Repeated callback results update one open callback task rather than accumulating open duplicates.
+5. Contact writes accept `Idempotency-Key`; a repeated key returns the original `ContactResult` without duplicating contact or audit event.
+6. Route detail serializes structured contacts in reverse chronological order. The UI displays outcome, note, employee and callback time; the assistant exposes attempt count, latest contact and next open task.
+7. P013 is now the complete synthetic continuation path: first step complete, second appointment missed, one follow-up task, rebooking, task resolution and final completion.
+8. `POST /routes/` rejects creation without a validated agreed step plan using `route_plan_required`.
+9. `dashboard.analytics` returns exact workspace-scoped snapshot metrics. Overdue routes use dynamic due-date logic and do not double-count a route that also has `attention_reason=overdue`.
+10. `database_config` decodes percent-encoded database name, user and password from `DATABASE_URL`.
+11. Vite production configuration uses `sourcemap: false`.
+
+No model schema change was required for this P0 set; the existing `ActionKey`, `Task`, `ContactResult` and audit models are reused.
+
+## Remaining P0/release risks
+
+- The cross-workspace mutation regression currently covers the appointment mutation path; direct route, step, slot, task and employee identifier cases should be added.
+- Persistent membership roles are reported but are not yet enforced as a complete mutation permission matrix.
+- PostgreSQL locking and partial-constraint behaviour has not been proven by SQLite tests.
+- The rebuilt static bundle has no JavaScript source maps; this check must be repeated for each release package.
+- The P013 browser mutation journey passes locally on mobile and desktop; production-like PostgreSQL and release-package checks remain release gates.
+
+## Remaining P1 gaps
 
 - Task workflow supports only open/done/cancelled.
 - There is no atomic appointment reschedule operation.
-- Full appointment and contact history is not visible.
-- Analytics lacks documented completion, overdue, cancellation, no-show and coordinator-action formulas.
+- Contact history is now visible; a unified typed timeline across contacts, appointments, comments, documents and audit events remains optional UI work.
+- Snapshot analytics formulas exist; historical periods and coordinator performance trends do not.
 - Queue sorting is fixed and there is no server pagination.
-- The assistant does not show previous attempts or the last result.
+- The assistant shows attempt count, last result and next open task, but does not use generative AI or external communication services.
 - Browser tests are not executed by CI; production PostgreSQL concurrency is not covered.
 
 ## Deployment and operational limitations
@@ -105,16 +123,19 @@ Known risks requiring hardening before a production-grade update:
 - deployment replaces public files before all Python setup and checks complete, so rollback is manual;
 - database export is an operational prerequisite rather than an automated step;
 - demo creation has no explicit rate limit and cleanup is triggered opportunistically unless a cron job is configured;
-- production source maps are currently emitted.
+- the release process still needs an artifact-level check that source maps are absent after the configured `sourcemap: false` build.
 
 No production deployment is part of the current development phase without explicit approval.
 
-## Baseline verification on 2026-11-02
+## Verification status on 2026-11-02
 
-- `python manage.py check`: passed.
-- `python manage.py makemigrations --check --dry-run`: no changes.
-- `python manage.py test core.tests -v 2`: 14/14 passed on SQLite.
-- `npm run typecheck`: passed.
-- `npm audit --omit=dev`: 0 reported vulnerabilities.
-- Existing specialist QA also ran the journey and analytics Playwright specs successfully; full mutation coverage and PostgreSQL testing remain open.
+- Django system check passed.
+- Migration drift check reported no changes.
+- All 26 backend tests passed on SQLite.
+- Frontend typecheck and production build passed; `npm audit --omit=dev` reported zero vulnerabilities.
+- The rebuilt static bundle contains no `.map` files.
+- Existing navigation/analytics journeys passed on the configured viewports.
+- P013 mutation passed on mobile and desktop; landing motion/WebGL fallback checks passed on desktop.
+
+PostgreSQL concurrency verification and production package inspection remain explicit release gates. No production deployment was performed.
 

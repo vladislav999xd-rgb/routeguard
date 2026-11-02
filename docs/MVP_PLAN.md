@@ -24,9 +24,26 @@ Mutation browser journey and release verification
 Private release package (no automatic production deployment)
 ```
 
+## Current implementation checkpoint
+
+The current working tree contains the verified P0 integration set and the first demonstrable P1 slice. Production deployment is still a separate, explicitly approved operation.
+
+| Area | Current state |
+|---|---|
+| Truthful seeded history | Implemented for synthetic scenarios; P019 regression added |
+| Active-route and required-step guards | Implemented for booking and completion |
+| Cancellation/no-show follow-up | One open follow-up is reused; successful rebooking closes it |
+| Callback handling | Future-date validation, one open callback task and contact idempotency implemented |
+| Contact visibility | Structured contacts and latest assistant context implemented in API/UI |
+| P013 continuation | Seed and backend regression cover missed appointment → task → rebook → completion |
+| Snapshot analytics | Workspace-scoped formulas implemented in `dashboard.analytics` |
+| Unsafe route creation | `POST /routes/` without a validated plan is rejected |
+| Database URL | Percent-encoded URI components are decoded and regression-tested |
+| Frontend production maps | Vite uses `sourcemap: false`; the rebuilt static artifact was verified to contain no `.map` files |
+
 ## P0 — stability and data integrity
 
-### P0.1 Truthful multi-event history
+### P0.1 Truthful multi-event history — implemented, final verification pending
 
 - Seed auditable events that correspond to the actual synthetic route, steps, appointments, documents and completion state.
 - Preserve event ordering and existing records.
@@ -38,7 +55,7 @@ Acceptance:
 - New actions append events and never remove prior history.
 - API returns events in deterministic reverse chronological order.
 
-### P0.2 Route transition guards
+### P0.2 Route transition guards — implemented, final verification pending
 
 - Reject step booking/completion for non-active routes.
 - Reject completing a later required step while an earlier required step is incomplete.
@@ -47,7 +64,7 @@ Acceptance:
 
 Acceptance: draft, cancelled and completed routes cannot be mutated through ordinary step commands; P013 cannot close early.
 
-### P0.3 Tasks for deviations without duplicates
+### P0.3 Tasks for deviations without duplicates — implemented, final verification pending
 
 - Create or reuse one open follow-up task after cancellation or no-show.
 - Resolve the relevant follow-up task when a replacement appointment is booked.
@@ -56,7 +73,7 @@ Acceptance: draft, cancelled and completed routes cannot be mutated through ordi
 
 Acceptance: repeated actions leave one current task and an intact audit trail.
 
-### P0.4 Visible contact results
+### P0.4 Visible contact results — implemented, final verification pending
 
 - Serialize contact outcome, note, employee, callback time and creation time.
 - Show structured contact attempts in the route card.
@@ -64,15 +81,17 @@ Acceptance: repeated actions leave one current task and an intact audit trail.
 
 Acceptance: a coordinator can reload the page and recover what happened and what must happen next.
 
-### P0.5 Workspace and API regression protection
+### P0.5 Workspace and API regression protection — partially implemented
 
-- Add API tests for foreign route, step, slot, appointment, task and employee IDs.
+- A foreign-workspace appointment mutation regression now verifies that the appointment, slot, step, events and tasks remain unchanged.
+- Extend the same matrix to direct foreign route, step, slot, task and employee identifiers.
 - Test CSRF/session behaviour and safe error responses.
 - Define permission rules for persistent admin/coordinator roles without blocking the writable demo.
 
-### P0.6 Deployment correctness
+### P0.6 Deployment correctness — partially implemented
 
-- Decode URI components in `DATABASE_URL` and test special-character credentials.
+- URI components in `DATABASE_URL` are decoded and special-character credentials have a regression test.
+- Production Vite source maps are disabled in configuration; the final package must be inspected after rebuilding.
 - Document and then harden backup location, installer cleanup and rollback behaviour.
 - Preserve migrations, existing PostgreSQL data and the current WSGI layout.
 
@@ -82,7 +101,7 @@ Acceptance: a coordinator can reload the page and recover what happened and what
 
 Introduce only the states required by the UX: new/open, in progress, waiting, repeat contact, done and closed for another reason. Add a migration and explicit transition rules only after P0 task deduplication is stable.
 
-### P1.2 Factual dashboard and analytics
+### P1.2 Factual dashboard and analytics — backend snapshot implemented
 
 Document and implement formulas for:
 
@@ -95,6 +114,8 @@ Document and implement formulas for:
 
 Metrics must be workspace-scoped and derived from stored data. Demo-date advancement must produce consistent queue and dashboard results.
 
+The implemented `dashboard.analytics` contract is a current snapshot, not a historical period report. It includes eligible/completed/incomplete routes, completion rate, overdue routes, missed/cancelled appointments and open/due/completed tasks. Time-period analytics and coordinator performance trends remain future work.
+
 ### P1.3 Route queue and main route card
 
 - Add explicit sorting by priority, due date and assignee.
@@ -106,7 +127,7 @@ Metrics must be workspace-scoped and derived from stored data. Demo-date advance
 
 Implement a server-side atomic reschedule command or label and test the existing two-step process honestly until atomic replacement is available.
 
-### P1.5 Reproducible end-to-end scenario
+### P1.5 Reproducible end-to-end scenario — backend and browser journeys implemented
 
 Automate and demonstrate:
 
@@ -119,6 +140,8 @@ Automate and demonstrate:
 7. remaining required steps complete in order;
 8. route completes;
 9. history and analytics reflect every real action.
+
+P013 supplies the backend path through missed appointment, one follow-up task, contact capture, rebooking, task completion and route completion. The mutation journey passes in Microsoft Edge at representative mobile and desktop viewports. A historical post-action analytics comparison remains future work; the current analytics contract is a factual snapshot.
 
 ## P2 — documented extension points only
 
