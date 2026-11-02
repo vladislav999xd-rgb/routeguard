@@ -100,8 +100,10 @@ $passwordlessLoginWorks = Test-SshKeyLogin -SshExecutable $ssh -SshArguments $co
 if (-not $passwordlessLoginWorks) {
     Write-Host "Настройка SSH-ключа: введите пароль SprintHost, затем код подтверждения." -ForegroundColor Yellow
     Write-Host "Пароль при вводе не отображается — это нормально." -ForegroundColor DarkGray
-    $installKeyCommand = 'umask 077; mkdir -p "$HOME/.ssh"; touch "$HOME/.ssh/authorized_keys"; IFS= read -r key_line; grep -qxF "$key_line" "$HOME/.ssh/authorized_keys" || printf "%s\n" "$key_line" >> "$HOME/.ssh/authorized_keys"; chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"'
-    Get-Content -LiteralPath $publicKeyPath -Raw | & $ssh -p $Port -o StrictHostKeyChecking=accept-new -o "PreferredAuthentications=keyboard-interactive,password" -o PubkeyAuthentication=no $connection $installKeyCommand
+    $publicKeyText = (Get-Content -LiteralPath $publicKeyPath -Raw).Trim()
+    $publicKeyPayload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($publicKeyText + "`n"))
+    $installKeyCommand = 'umask 077; mkdir -p "$HOME/.ssh"; auth="$HOME/.ssh/authorized_keys"; tmp="$HOME/.ssh/authorized_keys.routeguard.tmp"; if test -f "$auth"; then grep -v "routeguard-deploy" "$auth" > "$tmp" || true; else : > "$tmp"; fi; printf "%s" "' + $publicKeyPayload + '" | base64 -d >> "$tmp"; mv -f "$tmp" "$auth"; chmod 700 "$HOME/.ssh"; chmod 600 "$auth"'
+    & $ssh -p $Port -o StrictHostKeyChecking=accept-new -o "PreferredAuthentications=keyboard-interactive,password" -o PubkeyAuthentication=no $connection $installKeyCommand
     if ($LASTEXITCODE -ne 0) {
         throw "Не удалось добавить SSH-ключ. Проверьте логин, пароль и код подтверждения SprintHost."
     }
