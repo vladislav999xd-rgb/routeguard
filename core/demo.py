@@ -24,7 +24,7 @@ SCENARIOS = [
     dict(code="P010", name="Вера Николаевна Громова", age=59, status="draft", attention="no_confirmation", assignee="Ирина Смирнова", due=8, step="Уточнить исходное заключение", step_status="pending", history="Заключение заполнено не полностью.", comment="Запросить уточнение демоданных.", conclusion="Синтетическое демонстрационное заключение заполнено частично; клинические выводы отсутствуют."),
     dict(code="P011", name="Юлия Романовна Тихонова", age=41, status="active", attention="no_assignee", assignee=None, due=5, step="Назначить ответственного за следующий шаг", step_status="pending", history="Следующий шаг задан без ответственного.", comment="Назначьте ответственного."),
     dict(code="P012", name="Екатерина Денисовна Миронова", age=50, status="active", attention="no_document", assignee="Мария Котова", due=1, step="Подтвердить выполнение демодокументом", step_status="completed", confirm=True, history="Шаг выполнен, подтверждающий демодокумент отсутствует.", comment="Закрытие доступно после добавления синтетической заглушки."),
-    dict(code="P013", name="Галина Степановна Жукова", age=72, status="active", attention="", assignee="Ирина Смирнова", due=10, steps=[dict(title="Консультация по результатам", status="completed", service=0, due=-1, document="Синтетический демодокумент"), dict(title="Контрольное исследование", status="pending", service=3, due=10)], history="Первый шаг завершён, второй ожидает записи.", comment="Выбрать время контрольного исследования."),
+    dict(code="P013", name="Галина Степановна Жукова", age=72, status="active", attention="missed", assignee="Ирина Смирнова", due=10, steps=[dict(title="Консультация по результатам", status="completed", service=0, due=-3, document="Синтетический демодокумент"), dict(title="Контрольное исследование", status="pending", service=3, due=10)], appointment=dict(step=1, day=-1, status="missed", reason="Неявка на контрольное исследование"), return_reason="Неявка на второй этап", history="Первый шаг выполнен, второй пропущен; создана задача координатору.", comment="Связаться, организовать повторную запись и завершить маршрут.", task=True),
     dict(code="P014", name="Алёна Максимовна Власова", age=39, status="active", attention="cancelled", assignee="Мария Котова", due=8, step="Перенести консультацию", step_status="scheduled", appointment=dict(day=3, status="scheduled"), history="Получен запрос на перенос записи.", comment="Есть альтернативный свободный слот."),
     dict(code="P015", name="Надежда Валерьевна Кузнецова", age=63, status="active", attention="", assignee="Ирина Смирнова", due=12, step="Пройти консультацию по результатам", step_status="scheduled", appointment=dict(day=5, status="scheduled"), history="Активный маршрут по исследованию уже существует.", comment="Повторное создание должно показать предупреждение о дубле."),
     dict(code="P016", name="Лариса Евгеньевна Попова", age=54, status="active", attention="no_confirmation", assignee="Мария Котова", due=7, step="Согласовать удобное время", step_status="pending", history="Ожидается согласование времени с пациенткой.", comment="После демозвонка можно выбрать слот."),
@@ -37,6 +37,18 @@ SCENARIOS = [
 
 def aware_on(day: date, hour: int) -> datetime:
     return timezone.make_aware(datetime.combine(day, time(hour, 0)), ZoneInfo(settings.TIME_ZONE))
+
+
+def seed_event(workspace: Workspace, route: Route, event_type: str, message: str) -> None:
+    """Record the actual synthetic setup action instead of a single opaque seed event."""
+    AuditEvent.objects.create(
+        workspace=workspace,
+        route=route,
+        event_type=event_type,
+        message=message,
+        author="RouteGuard",
+        demo_date=workspace.demo_date,
+    )
 
 
 @transaction.atomic
@@ -58,26 +70,45 @@ def seed_workspace(workspace: Workspace) -> Workspace:
         study = Study.objects.create(workspace=workspace, patient=patient, uid=f"DEMO-{scenario['code']}-STUDY", study_type="Демонстрационное исследование", study_date=workspace.demo_date - timedelta(days=14 + position), conclusion=scenario.get("conclusion", STANDARD_CONCLUSION))
         completed_at = aware_on(workspace.demo_date - timedelta(days=1), 16) if scenario["status"] == "completed" else None
         route = Route.objects.create(workspace=workspace, patient=patient, study=study, assignee=employees.get(scenario.get("assignee")), status=scenario["status"], attention_reason=scenario["attention"], due_date=workspace.demo_date + timedelta(days=scenario["due"]), return_reason=scenario.get("return_reason", ""), completed_at=completed_at)
+        seed_event(workspace, route, "route_created", "Создан маршрут по демонстрационному исследованию")
+        if route.status != Route.Status.DRAFT:
+            seed_event(workspace, route, "route_confirmed", "Маршрут подтверждён и передан в работу")
         steps_data = scenario.get("steps") or [dict(title=scenario["step"], status=scenario["step_status"], service=scenario.get("service", 0), due=scenario["due"], confirm=scenario.get("confirm", False))]
         created_steps = []
         for sequence, step_data in enumerate(steps_data, 1):
             step_completed = aware_on(workspace.demo_date + timedelta(days=step_data.get("due", 0)), 15) if step_data["status"] == "completed" else None
             step = RouteStep.objects.create(workspace=workspace, route=route, sequence=sequence, title=step_data["title"], service=services[step_data.get("service", 0)], status=step_data["status"], confirmation_required=step_data.get("confirm", False), due_date=workspace.demo_date + timedelta(days=step_data.get("due", scenario["due"])), completed_at=step_completed)
             created_steps.append(step)
+            seed_event(workspace, route, "step_added", f"Добавлен шаг {sequence}: {step.title}")
             if step_data.get("document"):
-                Document.objects.create(workspace=workspace, step=step, label=step_data["document"])
+                document = Document.objects.create(workspace=workspace, step=step, label=step_data["document"])
+                seed_event(workspace, route, "document_added", f"Добавлен документ: {document.label}")
         if scenario.get("appointment"):
             appointment_data = scenario["appointment"]
-            service_index = scenario.get("service", 0)
+            appointment_step = created_steps[appointment_data.get("step", 0)]
+            service_index = next(index for index, service in enumerate(services) if service.id == appointment_step.service_id)
             slot = slots[(appointment_data["day"], service_index)]
-            Appointment.objects.create(workspace=workspace, step=created_steps[0], slot=slot, status=appointment_data["status"], reason=appointment_data.get("reason", ""))
+            appointment = Appointment.objects.create(workspace=workspace, step=appointment_step, slot=slot, status=appointment_data["status"], reason=appointment_data.get("reason", ""))
+            seed_event(workspace, route, "appointment_booked", f"Создана запись на {timezone.localtime(slot.starts_at):%d.%m.%Y %H:%M}")
             if appointment_data["status"] == "scheduled":
                 slot.status = ScheduleSlot.Status.BUSY
                 slot.save(update_fields=["status"])
+            else:
+                status_message = f"Запись: {appointment.get_status_display()}"
+                if appointment.reason:
+                    status_message += f". Причина: {appointment.reason}"
+                seed_event(workspace, route, f"appointment_{appointment.status}", status_message)
+        for step in created_steps:
+            if step.status == RouteStep.Status.COMPLETED:
+                seed_event(workspace, route, "step_completed", f"Шаг выполнен: {step.title}")
+        if route.status == Route.Status.COMPLETED:
+            seed_event(workspace, route, "route_completed", "Все обязательные шаги выполнены, маршрут завершён")
         Comment.objects.create(workspace=workspace, route=route, author="Демо-сценарий", body=scenario["comment"])
-        AuditEvent.objects.create(workspace=workspace, route=route, event_type="scenario_seeded", message=scenario["history"], author="RouteGuard", demo_date=workspace.demo_date)
+        seed_event(workspace, route, "comment_added", "Добавлен комментарий к демонстрационному маршруту")
         if scenario.get("task"):
-            Task.objects.create(workspace=workspace, route=route, assignee=route.assignee, kind=Task.Kind.FOLLOW_UP, title=f"Связаться с пациентом {patient.full_name}", due_at=aware_on(workspace.demo_date, 12 + position % 4))
+            task = Task.objects.create(workspace=workspace, route=route, assignee=route.assignee, kind=Task.Kind.FOLLOW_UP, title=f"Связаться с пациентом {patient.full_name}", due_at=aware_on(workspace.demo_date, 12 + position % 4))
+            seed_event(workspace, route, "task_created", f"Создана задача: {task.title}")
+        seed_event(workspace, route, "scenario_state", scenario["history"])
     return workspace
 
 

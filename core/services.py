@@ -46,16 +46,80 @@ def priority_info(route: Route) -> dict:
     return {"score": 20, "level": "normal", "label": "Планово", "reason": "Маршрут идёт по плану"}
 
 
+def _finish_open_tasks(workspace: Workspace, route: Route, kind: str) -> int:
+    """Resolve open operational tasks after the action they requested succeeds."""
+    return Task.objects.select_for_update().filter(
+        workspace=workspace,
+        route=route,
+        kind=kind,
+        status=Task.Status.OPEN,
+    ).update(status=Task.Status.DONE, completed_at=timezone.now())
+
+
+def _ensure_previous_required_steps_complete(workspace: Workspace, step: RouteStep) -> None:
+    """Keep booking and completion on the first unfinished required step."""
+    incomplete_previous = list(
+        RouteStep.objects.select_for_update()
+        .filter(workspace=workspace, route=step.route, required=True, sequence__lt=step.sequence)
+        .exclude(status=RouteStep.Status.COMPLETED)
+        .order_by("sequence")[:1]
+    )
+    if incomplete_previous:
+        raise DomainError(f"Сначала завершите обязательный шаг: {incomplete_previous[0].title}.")
+
+
+@transaction.atomic
+def ensure_follow_up_task(workspace: Workspace, route: Route, appointment_status: str, assignee=None) -> Task:
+    """Keep exactly one open rebooking task after a cancellation or missed visit."""
+    if route.workspace_id != workspace.id:
+        raise DomainError("Маршрут недоступен.")
+    if appointment_status not in {Appointment.Status.CANCELLED, Appointment.Status.MISSED}:
+        raise DomainError("Задача повторной записи создаётся только после отмены или неявки.")
+
+    open_tasks = list(
+        Task.objects.select_for_update()
+        .filter(workspace=workspace, route=route, kind=Task.Kind.FOLLOW_UP, status=Task.Status.OPEN)
+        .order_by("id")
+    )
+    title = (
+        f"Подобрать новую запись после отмены для {route.patient.full_name}"
+        if appointment_status == Appointment.Status.CANCELLED
+        else f"Связаться после неявки и подобрать запись для {route.patient.full_name}"
+    )
+    employee = assignee or route.assignee
+    due_at = workspace.reference_now()
+    if open_tasks:
+        task = open_tasks[0]
+        task.assignee = employee
+        task.title = title
+        task.due_at = due_at
+        task.completed_at = None
+        task.save(update_fields=["assignee", "title", "due_at", "completed_at"])
+        if len(open_tasks) > 1:
+            Task.objects.filter(pk__in=[item.pk for item in open_tasks[1:]]).update(status=Task.Status.CANCELLED)
+        return task
+    return Task.objects.create(
+        workspace=workspace,
+        route=route,
+        assignee=employee,
+        kind=Task.Kind.FOLLOW_UP,
+        title=title,
+        due_at=due_at,
+    )
+
+
 def recalculate_route(route: Route) -> Route:
     """Recalculate only after a write. Never call this from list/detail GET handlers."""
     required = list(route.steps.filter(required=True))
     all_done = bool(required) and all(step.status == RouteStep.Status.COMPLETED for step in required)
     missing_document = any(step.status == RouteStep.Status.COMPLETED and step.confirmation_required and not step.documents.exists() for step in required)
     fields = []
+    completed_now = False
     if all_done and not missing_document:
         if route.status != Route.Status.COMPLETED:
             route.status = Route.Status.COMPLETED
             fields.append("status")
+            completed_now = True
         if route.completed_at is None:
             route.completed_at = timezone.now()
             fields.append("completed_at")
@@ -67,6 +131,13 @@ def recalculate_route(route: Route) -> Route:
         fields.append("attention_reason")
     if fields:
         route.save(update_fields=fields)
+    if completed_now:
+        Task.objects.select_for_update().filter(
+            workspace=route.workspace,
+            route=route,
+            status=Task.Status.OPEN,
+        ).update(status=Task.Status.DONE, completed_at=timezone.now())
+        audit(route.workspace, route, "route_completed", "Все обязательные шаги выполнены, маршрут завершён", "RouteGuard")
     return route
 
 
@@ -103,8 +174,11 @@ def book_slot(workspace, step_id, slot_id, user, idempotency_key=""):
             return previous.response
     step = RouteStep.objects.select_for_update().select_related("route").get(pk=step_id, workspace=workspace)
     slot = ScheduleSlot.objects.select_for_update().get(pk=slot_id, workspace=workspace)
+    if step.route.status != Route.Status.ACTIVE:
+        raise DomainError("Запись доступна только для активного маршрута.")
     if step.status == RouteStep.Status.COMPLETED:
         raise DomainError("Выполненный шаг нельзя записать на приём.")
+    _ensure_previous_required_steps_complete(workspace, step)
     if slot.service_id != step.service_id:
         raise DomainError("Слот не соответствует услуге шага.")
     if slot.status != ScheduleSlot.Status.FREE:
@@ -123,6 +197,7 @@ def book_slot(workspace, step_id, slot_id, user, idempotency_key=""):
     if route.attention_reason in {Route.Attention.NO_SLOT, Route.Attention.CANCELLED, Route.Attention.MISSED, Route.Attention.NO_CONFIRMATION}:
         route.attention_reason = ""
         route.save(update_fields=["attention_reason"])
+    _finish_open_tasks(workspace, route, Task.Kind.FOLLOW_UP)
     audit(workspace, route, "appointment_booked", f"Запись создана на {timezone.localtime(slot.starts_at):%d.%m.%Y %H:%M}", author_name(workspace, user))
     response = {"appointment_id": appointment.id}
     if idempotency_key:
@@ -138,6 +213,9 @@ def complete_step(workspace, step_id, user):
     step = RouteStep.objects.select_for_update().select_related("route").get(pk=step_id, workspace=workspace)
     if step.status == RouteStep.Status.COMPLETED:
         return step
+    if step.route.status != Route.Status.ACTIVE:
+        raise DomainError("Выполнить шаг можно только в активном маршруте.")
+    _ensure_previous_required_steps_complete(workspace, step)
     appointment = step.appointments.filter(status=Appointment.Status.SCHEDULED).select_related("slot").first()
     if appointment:
         appointment.status = Appointment.Status.COMPLETED
@@ -161,8 +239,15 @@ def add_document(workspace, step_id, label, user):
 
 
 @transaction.atomic
-def save_contact(workspace, route_id, outcome, note, callback_at, user):
+def save_contact(workspace, route_id, outcome, note, callback_at, user, idempotency_key=""):
     route = Route.objects.select_for_update().get(pk=route_id, workspace=workspace)
+    if len(idempotency_key) > 100:
+        raise DomainError("Ключ идемпотентности слишком длинный.")
+    action = f"save_contact:{route.id}"
+    if idempotency_key:
+        previous = ActionKey.objects.filter(workspace=workspace, action=action, key=idempotency_key).first()
+        if previous:
+            return ContactResult.objects.get(pk=previous.response["contact_id"], workspace=workspace, route=route)
     if outcome not in ContactResult.Outcome.values:
         raise DomainError("Выберите корректный результат звонка.")
     callback_dt = None
@@ -175,9 +260,29 @@ def save_contact(workspace, route_id, outcome, note, callback_at, user):
             raise DomainError("Укажите корректную дату повторного звонка.") from exc
     if outcome == ContactResult.Outcome.CALLBACK and callback_dt is None:
         raise DomainError("Для результата «Перезвонить» укажите дату и время.")
+    if callback_dt is not None and callback_dt <= workspace.reference_now():
+        raise DomainError("Время повторного звонка должно быть в будущем.")
     employee = current_employee(workspace, user) or route.assignee
     result = ContactResult.objects.create(workspace=workspace, route=route, employee=employee, outcome=outcome, note=note, callback_at=callback_dt)
     if outcome == ContactResult.Outcome.CALLBACK:
-        Task.objects.create(workspace=workspace, route=route, assignee=employee, kind=Task.Kind.CALLBACK, title=f"Перезвонить пациенту {route.patient.full_name}", due_at=callback_dt)
+        open_tasks = list(
+            Task.objects.select_for_update()
+            .filter(workspace=workspace, route=route, kind=Task.Kind.CALLBACK, status=Task.Status.OPEN)
+            .order_by("id")
+        )
+        title = f"Перезвонить пациенту {route.patient.full_name}"
+        if open_tasks:
+            callback_task = open_tasks[0]
+            callback_task.assignee = employee
+            callback_task.title = title
+            callback_task.due_at = callback_dt
+            callback_task.completed_at = None
+            callback_task.save(update_fields=["assignee", "title", "due_at", "completed_at"])
+            if len(open_tasks) > 1:
+                Task.objects.filter(pk__in=[item.pk for item in open_tasks[1:]]).update(status=Task.Status.CANCELLED)
+        else:
+            Task.objects.create(workspace=workspace, route=route, assignee=employee, kind=Task.Kind.CALLBACK, title=title, due_at=callback_dt)
     audit(workspace, route, "contact_saved", f"Результат звонка: {result.get_outcome_display()}", author_name(workspace, user))
+    if idempotency_key:
+        ActionKey.objects.create(workspace=workspace, action=action, key=idempotency_key, response={"contact_id": result.id})
     return result

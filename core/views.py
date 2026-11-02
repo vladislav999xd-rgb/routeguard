@@ -6,7 +6,7 @@ from pathlib import Path
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count, Prefetch, Q
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -17,9 +17,9 @@ from rest_framework.response import Response
 
 from .demo import create_demo_workspace
 from .exceptions import DomainError
-from .models import Appointment, Comment, Employee, Membership, Route, RouteStep, ScheduleSlot, Study, Task, Workspace
+from .models import Appointment, Comment, ContactResult, Employee, Membership, Route, RouteStep, ScheduleSlot, Study, Task, Workspace
 from .serializers import EmployeeSerializer, RouteDetailSerializer, RouteListSerializer, SlotSerializer, TaskSerializer
-from .services import add_document, assign_route, author_name, audit, book_slot, complete_step, confirm_route, priority_info, save_contact
+from .services import add_document, assign_route, author_name, audit, book_slot, complete_step, confirm_route, ensure_follow_up_task, priority_info, save_contact
 from .workspace import cleanup_expired_demo_workspaces, get_workspace
 
 
@@ -91,7 +91,16 @@ def route_queryset(workspace):
     return (
         Route.objects.filter(workspace=workspace)
         .select_related("workspace", "patient", "study", "assignee")
-        .prefetch_related("steps__service", "steps__appointments__slot__facility", "steps__appointments__slot__specialist", "steps__documents", "tasks__route__patient", "events", "comments")
+        .prefetch_related(
+            "steps__service",
+            "steps__appointments__slot__facility",
+            "steps__appointments__slot__specialist",
+            "steps__documents",
+            Prefetch("tasks", queryset=Task.objects.select_related("route__patient", "assignee")),
+            Prefetch("contacts", queryset=ContactResult.objects.select_related("employee").order_by("-created_at", "-id")),
+            "events",
+            "comments",
+        )
     )
 
 
@@ -99,20 +108,47 @@ def route_queryset(workspace):
 @permission_classes([AllowAny])
 def dashboard(request):
     workspace = get_workspace(request)
+    today = workspace.demo_date if workspace.kind == Workspace.Kind.DEMO else timezone.localdate()
     routes = list(route_queryset(workspace))
     active = [route for route in routes if route.status in {Route.Status.DRAFT, Route.Status.ACTIVE}]
     prioritized = sorted(active, key=lambda route: (-priority_info(route)["score"], route.due_date, route.id))[:8]
     status_counts = {item["status"]: item["total"] for item in Route.objects.filter(workspace=workspace).values("status").annotate(total=Count("id"))}
     attention_counts = {item["attention_reason"] or "none": item["total"] for item in Route.objects.filter(workspace=workspace).values("attention_reason").annotate(total=Count("id"))}
-    today = workspace.demo_date if workspace.kind == Workspace.Kind.DEMO else timezone.localdate()
-    task_count = Task.objects.filter(workspace=workspace, status=Task.Status.OPEN, due_at__date__lte=today).count()
+    route_metrics = Route.objects.filter(workspace=workspace).aggregate(
+        eligible_routes=Count("id", filter=~Q(status=Route.Status.CANCELLED)),
+        completed_routes=Count("id", filter=Q(status=Route.Status.COMPLETED)),
+        incomplete_routes=Count("id", filter=Q(status__in=[Route.Status.DRAFT, Route.Status.ACTIVE])),
+        overdue_routes=Count(
+            "id",
+            filter=Q(status__in=[Route.Status.DRAFT, Route.Status.ACTIVE])
+            & (Q(due_date__lt=today) | Q(attention_reason=Route.Attention.OVERDUE)),
+        ),
+    )
+    appointment_metrics = Appointment.objects.filter(workspace=workspace).aggregate(
+        missed_appointments=Count("id", filter=Q(status=Appointment.Status.MISSED)),
+        cancelled_appointments=Count("id", filter=Q(status=Appointment.Status.CANCELLED)),
+    )
+    task_metrics = Task.objects.filter(workspace=workspace).aggregate(
+        open_tasks=Count("id", filter=Q(status=Task.Status.OPEN)),
+        due_tasks=Count("id", filter=Q(status=Task.Status.OPEN, due_at__date__lte=today)),
+        completed_tasks=Count("id", filter=Q(status=Task.Status.DONE)),
+    )
+    task_count = task_metrics["due_tasks"]
     calls_today = Task.objects.filter(
         workspace=workspace,
         status=Task.Status.OPEN,
         kind=Task.Kind.CALLBACK,
         due_at__date=today,
     ).count()
-    return Response({"summary": {"total": len(routes), "active": len(active), "completed": status_counts.get("completed", 0), "attention": sum(1 for route in active if route.attention_reason), "tasks_due": task_count, "calls_today": calls_today}, "status_counts": status_counts, "attention_counts": attention_counts, "priority_routes": RouteListSerializer(prioritized, many=True).data})
+    eligible_routes = route_metrics["eligible_routes"]
+    analytics = {
+        "as_of": today.isoformat(),
+        **route_metrics,
+        "completion_rate_percent": round(route_metrics["completed_routes"] * 100 / eligible_routes, 1) if eligible_routes else 0,
+        **appointment_metrics,
+        **task_metrics,
+    }
+    return Response({"summary": {"total": len(routes), "active": len(active), "completed": status_counts.get("completed", 0), "attention": sum(1 for route in active if route.attention_reason), "tasks_due": task_count, "calls_today": calls_today}, "status_counts": status_counts, "attention_counts": attention_counts, "priority_routes": RouteListSerializer(prioritized, many=True).data, "analytics": analytics})
 
 
 @api_view(["GET", "POST"])
@@ -123,9 +159,10 @@ def routes_view(request):
         study = get_object_or_404(Study, pk=request.data.get("study_id"), workspace=workspace)
         if Route.objects.filter(workspace=workspace, study=study, status__in=[Route.Status.DRAFT, Route.Status.ACTIVE]).exists():
             raise DomainError("Для этого исследования уже существует активный маршрут.", code="duplicate_route", status_code=409)
-        route = Route.objects.create(workspace=workspace, patient=study.patient, study=study, due_date=request.data.get("due_date") or workspace.demo_date + timedelta(days=7), status=Route.Status.DRAFT, attention_reason=Route.Attention.NO_CONFIRMATION)
-        audit(workspace, route, "route_created", "Создан новый маршрут", author_name(workspace, request.user))
-        return Response(RouteDetailSerializer(route_queryset(workspace).get(pk=route.pk)).data, status=201)
+        raise DomainError(
+            "Создание маршрута без согласованного плана шагов отключено. Используйте импорт утверждённого плана.",
+            code="route_plan_required",
+        )
     queryset = route_queryset(workspace)
     for field in ("status", "attention_reason", "assignee"):
         value = request.query_params.get(field)
@@ -205,7 +242,15 @@ def route_comment(request, route_id):
 @permission_classes([AllowAny])
 def route_contact(request, route_id):
     workspace = get_workspace(request)
-    result = save_contact(workspace, route_id, request.data.get("outcome", ""), request.data.get("note", "").strip()[:500], request.data.get("callback_at"), request.user)
+    result = save_contact(
+        workspace,
+        route_id,
+        request.data.get("outcome", ""),
+        request.data.get("note", "").strip()[:500],
+        request.data.get("callback_at"),
+        request.user,
+        request.headers.get("Idempotency-Key", ""),
+    )
     return Response({"id": result.id}, status=201)
 
 
@@ -285,6 +330,7 @@ def appointment_status(request, appointment_id):
         route.attention_reason = Route.Attention.CANCELLED if target == Appointment.Status.CANCELLED else Route.Attention.MISSED
         route.return_reason = appointment.reason or appointment.get_status_display()
         route.save(update_fields=["status", "attention_reason", "return_reason"])
+        ensure_follow_up_task(workspace, route, target, route.assignee)
         audit(workspace, route, f"appointment_{target}", f"Запись: {appointment.get_status_display()}", author_name(workspace, request.user))
     return Response({"ok": True})
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from dotenv import load_dotenv
 
@@ -64,9 +64,9 @@ def database_config() -> dict:
     query = parse_qs(parsed.query)
     return {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": parsed.path.lstrip("/"),
-        "USER": parsed.username or "",
-        "PASSWORD": parsed.password or "",
+        "NAME": unquote(parsed.path.lstrip("/")),
+        "USER": unquote(parsed.username or ""),
+        "PASSWORD": unquote(parsed.password or ""),
         "HOST": parsed.hostname or "localhost",
         "PORT": parsed.port or 5432,
         "CONN_MAX_AGE": 60,

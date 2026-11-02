@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from .call_assistant import build_call_assistant
-from .models import Appointment, AuditEvent, Comment, Document, Employee, Route, RouteStep, ScheduleSlot, Task
+from .models import Appointment, AuditEvent, Comment, ContactResult, Document, Employee, Route, RouteStep, ScheduleSlot, Task
 from .services import priority_info
 
 
@@ -69,6 +69,15 @@ class CommentSerializer(serializers.ModelSerializer):
         fields = ["id", "author", "body", "created_at"]
 
 
+class ContactResultSerializer(serializers.ModelSerializer):
+    outcome_label = serializers.CharField(source="get_outcome_display", read_only=True)
+    employee_name = serializers.CharField(source="employee.full_name", read_only=True, allow_null=True)
+
+    class Meta:
+        model = ContactResult
+        fields = ["id", "outcome", "outcome_label", "note", "callback_at", "employee", "employee_name", "created_at"]
+
+
 class RouteListSerializer(serializers.ModelSerializer):
     patient_code = serializers.CharField(source="patient.code", read_only=True)
     patient_name = serializers.CharField(source="patient.full_name", read_only=True)
@@ -103,10 +112,11 @@ class RouteDetailSerializer(RouteListSerializer):
     tasks = TaskSerializer(many=True, read_only=True)
     events = EventSerializer(many=True, read_only=True)
     comments = CommentSerializer(many=True, read_only=True)
+    contacts = ContactResultSerializer(many=True, read_only=True)
     call_assistant = serializers.SerializerMethodField()
 
     class Meta(RouteListSerializer.Meta):
-        fields = RouteListSerializer.Meta.fields + ["conclusion", "study_date", "steps", "tasks", "events", "comments", "call_assistant"]
+        fields = RouteListSerializer.Meta.fields + ["conclusion", "study_date", "steps", "tasks", "events", "comments", "contacts", "call_assistant"]
 
     def get_call_assistant(self, obj):
         return build_call_assistant(obj)

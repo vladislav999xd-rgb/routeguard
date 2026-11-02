@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .models import Appointment, Route
+from .models import Appointment, ContactResult, Route, Task
 
 
 def build_call_assistant(route: Route) -> dict:
@@ -25,7 +25,25 @@ def build_call_assistant(route: Route) -> dict:
         route.attention_reason,
         ("Напоминание о записи" if appointment else "Организационный звонок", "подтвердить актуальность записи" if appointment else "уточнить готовность к следующему шагу", ["Удобно ли сейчас говорить?", "Когда лучше выполнить следующий шаг?"]),
     )
+    contacts = sorted(route.contacts.all(), key=lambda item: (item.created_at, item.id), reverse=True)
+    last_contact = contacts[0] if contacts else None
+    open_tasks = sorted(
+        (task for task in route.tasks.all() if task.status == Task.Status.OPEN),
+        key=lambda task: (task.due_at, task.id),
+    )
+    next_task = open_tasks[0] if open_tasks else None
+
     opening = f"Здравствуйте, {first_name}. Меня зовут [имя], я координатор RouteGuard. Удобно ли сейчас говорить?"
+    previous_contact_prompts = {
+        ContactResult.Outcome.REACHED: "В прошлый раз контакт состоялся; верно ли я понимаю, что договорённости остаются актуальны?",
+        ContactResult.Outcome.SLOT_AGREED: "Ранее мы согласовали время; всё ли остаётся в силе?",
+        ContactResult.Outcome.CALLBACK: "Мы договаривались связаться повторно; удобно ли продолжить сейчас?",
+        ContactResult.Outcome.NO_ANSWER: "Ранее нам не удалось связаться; удобно ли поговорить сейчас?",
+        ContactResult.Outcome.DECLINED: "Ранее разговор был неудобен; можно ли сейчас коротко обсудить организационный шаг?",
+    }
+    if last_contact:
+        prompt = previous_contact_prompts[last_contact.outcome]
+        questions = [prompt, *questions]
     offer = "Я могу предложить доступные варианты. Запись оформлю только после вашего подтверждения."
     closing = "Спасибо. Я зафиксирую результат разговора и согласованное следующее действие."
     return {
@@ -36,6 +54,25 @@ def build_call_assistant(route: Route) -> dict:
         "step": step.title if step else "Следующий организационный шаг",
         "due": (step.due_date if step else route.due_date).isoformat(),
         "appointment": appointment.slot.starts_at.isoformat() if appointment else None,
+        "contact_attempts": len(contacts),
+        "last_contact": {
+            "id": last_contact.id,
+            "outcome": last_contact.outcome,
+            "outcome_label": last_contact.get_outcome_display(),
+            "note": last_contact.note,
+            "callback_at": last_contact.callback_at.isoformat() if last_contact.callback_at else None,
+            "created_at": last_contact.created_at.isoformat(),
+        }
+        if last_contact
+        else None,
+        "next_task": {
+            "id": next_task.id,
+            "kind": next_task.kind,
+            "title": next_task.title,
+            "due_at": next_task.due_at.isoformat(),
+        }
+        if next_task
+        else None,
         "opening": opening,
         "questions": questions,
         "offer": offer,
