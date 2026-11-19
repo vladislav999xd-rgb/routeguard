@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 
 test('landing, demo dashboard and call assistant', async ({ page }, testInfo) => {
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: /Каждый следующий шаг пациента/ })).toBeVisible()
+  await expect(page.getByRole('heading', { name: /Довести маршрут пациента/ })).toBeVisible()
   await page.getByRole('button', { name: /Открыть демо/ }).first().click()
   await expect(page).toHaveURL(/\/app$/)
   await expect(page.getByRole('heading', { name: 'Рабочий день' })).toBeVisible()
