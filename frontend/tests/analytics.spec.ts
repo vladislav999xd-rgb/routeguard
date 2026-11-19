@@ -5,7 +5,7 @@ test('lazy analytics bundle opens after the demo workspace is created', async ({
   await page.goto('/')
   await page.getByRole('button', { name: /Открыть демо/ }).first().click()
   await expect(page.getByRole('heading', { name: 'Рабочий день' })).toBeVisible()
-  await page.getByRole('link', { name: 'Аналитика', exact: true }).click()
+  await page.goto('/app/analytics')
   await expect(page.getByRole('heading', { name: 'Аналитика' })).toBeVisible()
   await expect(page.getByText('Состояние маршрутов')).toBeVisible()
   await expect(page.locator('.recharts-responsive-container').first()).toBeVisible()

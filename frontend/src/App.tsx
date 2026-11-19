@@ -32,6 +32,7 @@ import {
   ClipboardCheck,
   Clock3,
   FileText,
+  FolderOpen,
   LayoutDashboard,
   ListTodo,
   LogOut,
@@ -45,7 +46,10 @@ import {
   Settings,
   ShieldCheck,
   TriangleAlert,
+  Upload,
+  UserPlus,
   UserRound,
+  Users,
   X,
 } from 'lucide-react'
 import { api, formatDate, post, Session } from './api'
@@ -56,6 +60,7 @@ const AnalyticsPage = lazy(() => import('./AnalyticsPage'))
 type Priority = { score: number; level: string; label: string; reason: string }
 type RouteRow = {
   id: number
+  patient_id: number
   patient_code: string
   patient_name: string
   birth_date: string
@@ -85,6 +90,7 @@ type Employee = { id: number; full_name: string; role: string }
 type Task = {
   id: number
   route_id: number
+  patient_id: number
   patient_code: string
   patient_name: string
   title: string
@@ -115,7 +121,8 @@ type RouteDetail = RouteRow & {
     due_date: string
     confirmation_required: boolean
     appointments: Array<{ id: number; status: string; reason: string; slot: Slot }>
-    documents: Array<{ id: number; label: string }>
+    completed_at: string | null
+    documents: Array<{ id: number; label: string; kind: string; kind_label: string; synthetic: boolean; file_name: string; content_type: string; size: number; download_url: string | null; created_at: string }>
   }>
   tasks: Task[]
   events: Array<{ id: number; message: string; author: string; occurred_at: string; demo_date: string }>
@@ -138,6 +145,16 @@ type RouteDetail = RouteRow & {
     next_task: null | Pick<Task, 'id' | 'kind' | 'title' | 'due_at'>
   }
 }
+type Patient = {
+  id: number
+  code: string
+  full_name: string
+  birth_date: string
+  routes_count: number
+  current_route: RouteRow | null
+  routes?: RouteRow[]
+}
+type RoutePlan = { id: string; title: string; description: string; steps: Array<{ title: string; due_in_days: number }> }
 type DashboardData = {
   summary: { total: number; active: number; completed: number; attention: number; tasks_due: number; calls_today?: number }
   status_counts: Record<string, number>
@@ -277,10 +294,8 @@ function ProductPreview() {
 
 const mainNav = [
   ['/app', 'Обзор', LayoutDashboard],
-  ['/app/routes', 'Маршруты', RouteIcon],
+  ['/app/patients', 'Пациенты', Users],
   ['/app/tasks', 'Задачи', ListTodo],
-  ['/app/schedule', 'Расписание', CalendarDays],
-  ['/app/analytics', 'Аналитика', BarChart3],
 ] as const
 
 function AppShell({ children }: { children: ReactNode }) {
@@ -290,7 +305,7 @@ function AppShell({ children }: { children: ReactNode }) {
   const [query, setQuery] = useState('')
   const submitSearch = (event: FormEvent) => {
     event.preventDefault()
-    navigate(`/app/routes?search=${encodeURIComponent(query.trim())}`)
+    navigate(`/app/patients?search=${encodeURIComponent(query.trim())}`)
   }
   const logout = async () => {
     await post('/auth/logout/')
@@ -302,7 +317,7 @@ function AppShell({ children }: { children: ReactNode }) {
     <aside className={open ? 'sidebar open' : 'sidebar'}>
       <div className="sidebar-top"><Brand subtitle={session?.workspace?.kind === 'demo' ? 'ДЕМО · 20 пациентов' : session?.workspace?.name} /><button className="icon-button close-menu" onClick={() => setOpen(false)} aria-label="Закрыть меню"><X /></button></div>
       <nav className="primary-nav">{mainNav.map(([url, label, Icon]) => <NavLink key={url} to={url} end={url === '/app'} onClick={() => setOpen(false)}><Icon />{label}</NavLink>)}</nav>
-      <nav className="secondary-nav"><NavLink to="/app/scenarios" onClick={() => setOpen(false)}><ClipboardCheck />Сценарии</NavLink><NavLink to="/app/settings" onClick={() => setOpen(false)}><Settings />Настройки</NavLink><button onClick={logout}><LogOut />Выйти</button></nav>
+      <nav className="secondary-nav"><button onClick={logout}><LogOut />Выйти</button></nav>
     </aside>
     {open && <button className="backdrop" onClick={() => setOpen(false)} aria-label="Закрыть меню" />}
     <div className="content">
@@ -329,7 +344,6 @@ function Dashboard() {
     return { dashboard, routes }
   })
   const [filter, setFilter] = useState<QueueFilter>('all')
-  const [selectedId, setSelectedId] = useState<number | null>(null)
   if (error) return <ErrorState error={error} retry={reload} />
   if (!data) return <Loading />
   const rows = filterRoutes(data.routes, filter, today)
@@ -339,14 +353,13 @@ function Dashboard() {
     today: filterRoutes(data.routes, 'today', today).length,
     week: filterRoutes(data.routes, 'week', today).length,
   }
-  return <div className={selectedId ? 'workbench drawer-open' : 'workbench'}>
+  return <div className="workbench">
     <div className="workspace-main">
       <PageHead title="Рабочий день" date={today} />
       <MetricsStrip active={data.dashboard.summary.active} attention={data.dashboard.summary.attention} calls={data.dashboard.summary.calls_today ?? 0} />
       <QueueTabs active={filter} counts={counts} onChange={setFilter} />
-      <section className="queue-surface">{rows.length ? <RouteTable rows={rows} selectedId={selectedId} onSelect={setSelectedId} /> : <Empty text="В этой группе маршрутов нет" />}</section>
+      <section className="queue-surface">{rows.length ? <RouteTable rows={rows} /> : <Empty text="В этой группе маршрутов нет" />}</section>
     </div>
-    {selectedId && <PatientDrawer routeId={selectedId} onClose={() => setSelectedId(null)} />}
   </div>
 }
 
@@ -369,17 +382,17 @@ function duePresentation(row: RouteRow, today: string) {
   return { overdue, dueToday, label: overdue ? 'Просрочен' : dueToday ? 'Сегодня' : formatDate(row.due_date) }
 }
 
-function RouteTable({ rows, selectedId, onSelect }: { rows: RouteRow[]; selectedId?: number | null; onSelect?: (id: number) => void }) {
+function RouteTable({ rows }: { rows: RouteRow[] }) {
   const { session } = useSession()
   const today = session?.workspace?.demo_date ?? new Date().toISOString().slice(0, 10)
   const navigate = useNavigate()
-  const choose = (row: RouteRow) => onSelect ? onSelect(row.id) : navigate(`/app/routes/${row.id}`)
+  const choose = (row: RouteRow) => navigate(`/app/patients/${row.patient_id}?route=${row.id}`)
   const onRowKey = (event: KeyboardEvent<HTMLTableRowElement>, row: RouteRow) => {
     if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); choose(row) }
   }
   return <div className="table-wrap"><table className="route-table"><thead><tr><th>Пациент</th><th>Следующий шаг</th><th>Срок</th><th>Ответственный</th><th><span className="sr-only">Открыть</span></th></tr></thead><tbody>{rows.map((row) => {
     const due = duePresentation(row, today)
-    return <tr key={row.id} className={selectedId === row.id ? 'selected' : ''} tabIndex={0} aria-label={`Открыть маршрут ${row.patient_name}`} onClick={() => choose(row)} onKeyDown={(event) => onRowKey(event, row)}><td data-label="Пациент"><div className="patient-cell"><span className="avatar patient-avatar">{initials(row.patient_name)}</span><span><b>{row.patient_name}</b><small>{row.patient_code} · {row.study_type}</small></span></div></td><td data-label="Следующий шаг"><div className="step-cell"><span className="cell-icon">{row.attention_reason === 'no_document' ? <FileText /> : row.attention_reason === 'cancelled' || row.attention_reason === 'missed' ? <Phone /> : <ClipboardCheck />}</span><span><b>{row.next_step?.title ?? 'Все шаги выполнены'}</b><small>{row.attention_label || row.status_label}</small></span></div></td><td data-label="Срок"><span className={due.overdue ? 'due overdue' : due.dueToday ? 'due today' : 'due'}><b>{due.label}</b>{(due.overdue || due.dueToday) && <small>{formatDate(row.due_date)}</small>}</span></td><td data-label="Ответственный"><div className="assignee-cell"><span className="avatar tiny">{row.assignee_name ? initials(row.assignee_name) : '—'}</span><span><b>{row.assignee_name ?? 'Не назначен'}</b><small>{row.assignee_name ? 'Координатор' : 'Требуется действие'}</small></span></div></td><td><button className="row-open" onClick={(event) => { event.stopPropagation(); onSelect ? onSelect(row.id) : navigate(`/app/routes/${row.id}`) }} aria-label={`Открыть ${row.patient_name}`}><ChevronRight /></button></td></tr>
+    return <tr key={row.id} tabIndex={0} aria-label={`Открыть карточку ${row.patient_name}`} onClick={() => choose(row)} onKeyDown={(event) => onRowKey(event, row)}><td data-label="Пациент"><div className="patient-cell"><span className="avatar patient-avatar">{initials(row.patient_name)}</span><span><b>{row.patient_name}</b><small>{row.patient_code} · {row.study_type}</small></span></div></td><td data-label="Следующий шаг"><div className="step-cell"><span className="cell-icon">{row.attention_reason === 'no_document' ? <FileText /> : row.attention_reason === 'cancelled' || row.attention_reason === 'missed' ? <Phone /> : <ClipboardCheck />}</span><span><b>{row.next_step?.title ?? 'Все шаги выполнены'}</b><small>{row.attention_label || row.status_label}</small></span></div></td><td data-label="Срок"><span className={due.overdue ? 'due overdue' : due.dueToday ? 'due today' : 'due'}><b>{due.label}</b>{(due.overdue || due.dueToday) && <small>{formatDate(row.due_date)}</small>}</span></td><td data-label="Ответственный"><div className="assignee-cell"><span className="avatar tiny">{row.assignee_name ? initials(row.assignee_name) : '—'}</span><span><b>{row.assignee_name ?? 'Не назначен'}</b><small>{row.assignee_name ? 'Координатор' : 'Требуется действие'}</small></span></div></td><td><button className="row-open" onClick={(event) => { event.stopPropagation(); choose(row) }} aria-label={`Открыть карточку ${row.patient_name}`}><ChevronRight /></button></td></tr>
   })}</tbody></table></div>
 }
 
@@ -394,7 +407,7 @@ function PatientDrawer({ routeId, onClose }: { routeId: number; onClose: () => v
 function DrawerRoute({ route, onOpen }: { route: RouteDetail; onOpen: () => void }) {
   const currentIndex = Math.max(0, route.steps.findIndex((step) => step.status !== 'completed'))
   const appointments = route.steps.flatMap((step) => step.appointments.filter((item) => item.status === 'scheduled'))
-  return <><div className="drawer-section-title"><div><h3>Текущий маршрут</h3><p>{route.steps.filter((step) => step.status === 'completed').length} из {route.steps.length} этапов</p></div><span>{route.status_label}</span></div><div className="route-progress">{route.steps.map((step, index) => <div className={step.status === 'completed' ? 'progress-step completed' : index === currentIndex ? 'progress-step current' : 'progress-step future'} key={step.id}><span className="progress-dot">{step.status === 'completed' ? <Check /> : index + 1}</span><div><b>{step.title}</b><small>{step.status === 'completed' ? `Завершён · ${formatDate(step.due_date)}` : index === currentIndex ? 'Текущий этап' : `Срок · ${formatDate(step.due_date)}`}</small>{index === currentIndex && <div className="next-action"><CalendarDays /><span><b>{step.service_name}</b><small>{route.attention_label || 'Готов к следующему действию'}</small></span><ChevronRight /></div>}</div></div>)}</div>{route.next_step && <button className="button primary drawer-action" onClick={onOpen}><CalendarDays />Подобрать время</button>}<div className="upcoming"><div className="drawer-section-title"><h3>Ближайшие даты</h3><button onClick={onOpen}>Все действия<ArrowRight /></button></div>{appointments.length ? appointments.slice(0, 3).map((appointment) => <div className="upcoming-row" key={appointment.id}><i /><span><b>{formatDate(appointment.slot.starts_at, true)}</b><small>{appointment.slot.facility_name}</small></span></div>) : route.tasks.filter((task) => task.status === 'open').slice(0, 3).map((task) => <div className="upcoming-row" key={task.id}><i /><span><b>{formatDate(task.due_at, true)}</b><small>{task.title}</small></span></div>)}{!appointments.length && !route.tasks.some((task) => task.status === 'open') && <p className="drawer-empty">Ближайших записей и задач нет.</p>}</div></>
+  return <><div className="drawer-section-title"><div><h3>Текущий маршрут</h3><p>{route.steps.filter((step) => step.status === 'completed').length} из {route.steps.length} этапов</p></div><span>{route.status_label}</span></div><div className="route-progress">{route.steps.map((step, index) => <div className={step.status === 'completed' ? 'progress-step completed' : index === currentIndex ? 'progress-step current' : 'progress-step future'} key={step.id}><span className="progress-dot">{step.status === 'completed' ? <Check /> : index + 1}</span><div><b>{step.title}</b><small>{step.status === 'completed' ? `Выполнен · ${formatDate(step.completed_at, true)}` : index === currentIndex ? 'Текущий этап' : `Срок · ${formatDate(step.due_date)}`}</small>{index === currentIndex && <div className="next-action"><CalendarDays /><span><b>{step.service_name}</b><small>{route.attention_label || 'Готов к следующему действию'}</small></span><ChevronRight /></div>}</div></div>)}</div>{route.next_step && <button className="button primary drawer-action" onClick={onOpen}><CalendarDays />Подобрать время</button>}<div className="upcoming"><div className="drawer-section-title"><h3>Ближайшие даты</h3><button onClick={onOpen}>Все действия<ArrowRight /></button></div>{appointments.length ? appointments.slice(0, 3).map((appointment) => <div className="upcoming-row" key={appointment.id}><i /><span><b>{formatDate(appointment.slot.starts_at, true)}</b><small>{appointment.slot.facility_name}</small></span></div>) : route.tasks.filter((task) => task.status === 'open').slice(0, 3).map((task) => <div className="upcoming-row" key={task.id}><i /><span><b>{formatDate(task.due_at, true)}</b><small>{task.title}</small></span></div>)}{!appointments.length && !route.tasks.some((task) => task.status === 'open') && <p className="drawer-empty">Ближайших записей и задач нет.</p>}</div></>
 }
 
 function DrawerTasks({ route }: { route: RouteDetail }) {
@@ -410,6 +423,148 @@ function DrawerNotes({ route }: { route: RouteDetail }) {
   return <div className="drawer-list"><h3>Заметки</h3>{route.comments.length ? route.comments.map((comment) => <div key={comment.id}><span className="mini-status"><MessageSquareText /></span><span><b>{comment.body}</b><small>{comment.author} · {formatDate(comment.created_at, true)}</small></span></div>) : <Empty text="Заметок пока нет" />}</div>
 }
 
+function PatientsPage() {
+  const [params] = useSearchParams()
+  const [search, setSearch] = useState(params.get('search') ?? '')
+  const { data, error, reload } = useLoad<Patient[]>(() => api(`/patients/?search=${encodeURIComponent(search)}`), [search])
+  useEffect(() => setSearch(params.get('search') ?? ''), [params])
+  return <>
+    <PageHead eyebrow="Реестр" title="Пациенты" text="Один пациент — одна карточка со всеми маршрутами и действиями." action={<NavLink className="button primary" to="/app/patients/new"><UserPlus />Добавить пациента</NavLink>} />
+    <div className="patient-registry-search"><label className="search field-search"><Search /><span className="sr-only">Поиск пациента</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ФИО или идентификатор пациента" /></label></div>
+    <section className="patient-registry" aria-label="Реестр пациентов">
+      {error ? <ErrorState error={error} retry={reload} /> : !data ? <Loading /> : data.length ? data.map((patient) => <PatientRegistryRow key={patient.id} patient={patient} />) : <Empty text="Пациенты не найдены" detail="Измените запрос или зарегистрируйте нового пациента." />}
+    </section>
+  </>
+}
+
+function PatientRegistryRow({ patient }: { patient: Patient }) {
+  const route = patient.current_route
+  return <article className="patient-registry-row">
+    <div className="patient-registry-person"><span className="avatar patient-avatar">{initials(patient.full_name)}</span><div><h2>{patient.full_name}</h2><p>{patient.code} · {ageFromBirthDate(patient.birth_date)} лет</p></div></div>
+    <div><small>Текущий маршрут</small><strong>{route ? route.study_type : 'Маршрут не создан'}</strong><span className={`registry-status ${route?.status ?? 'none'}`}>{route?.status_label ?? 'Новый пациент'}</span></div>
+    <div><small>Следующее действие</small><strong>{route?.next_step?.title ?? (route ? 'Все этапы выполнены' : 'Создать утверждённый маршрут')}</strong><span>{route?.attention_label || route?.priority?.reason || 'Откройте карточку пациента'}</span></div>
+    <NavLink className="button secondary" to={`/app/patients/${patient.id}${route ? `?route=${route.id}` : ''}`}>Открыть карточку</NavLink>
+  </article>
+}
+
+function PatientCreatePage() {
+  const navigate = useNavigate()
+  const [fullName, setFullName] = useState('')
+  const [birthDate, setBirthDate] = useState('')
+  const [state, setState] = useState({ busy: false, error: '' })
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    setState({ busy: true, error: '' })
+    try {
+      const patient = await post<Patient>('/patients/', { full_name: fullName, birth_date: birthDate })
+      navigate(`/app/patients/${patient.id}`)
+    } catch (reason) {
+      setState({ busy: false, error: (reason as Error).message })
+    }
+  }
+  return <div className="patient-create-page">
+    <NavLink to="/app/patients" className="back"><ArrowLeft />К реестру пациентов</NavLink>
+    <section className="panel patient-create-card">
+      <span className="section-kicker">Регистрация</span><h1>Новый пациент</h1><p>Для демоверсии достаточно ФИО и даты рождения. Внутренний идентификатор создаётся автоматически.</p>
+      <form onSubmit={submit} className="patient-create-form">
+        <label>ФИО<input required minLength={5} maxLength={180} autoComplete="name" value={fullName} onChange={(event) => setFullName(event.target.value)} placeholder="Например, Алиса Сергеевна Тестова" /></label>
+        <label>Дата рождения<input required type="date" value={birthDate} onChange={(event) => setBirthDate(event.target.value)} /></label>
+        <div className="registration-note"><ShieldCheck /><span><b>Проверка дублей включена</b><small>Совпадение ФИО и даты рождения будет отклонено.</small></span></div>
+        <button disabled={state.busy} className="button primary" type="submit">{state.busy ? 'Регистрируем…' : 'Зарегистрировать пациента'}</button>
+        {state.error && <p className="form-message error" role="alert">{state.error}</p>}
+      </form>
+    </section>
+  </div>
+}
+
+function PatientPage() {
+  const { id } = useParams()
+  const [params, setParams] = useSearchParams()
+  const { data: patient, error, reload } = useLoad<Patient>(() => api(`/patients/${id}/`), [id])
+  const routeParam = Number(params.get('route')) || null
+  if (error) return <ErrorState error={error} retry={reload} />
+  if (!patient) return <Loading rows={7} />
+  const routes = patient.routes ?? []
+  const selectedRouteId = routes.some((route) => route.id === routeParam) ? routeParam : (patient.current_route?.id ?? routes[0]?.id ?? null)
+  const selectRoute = (routeId: number) => setParams({ route: String(routeId) })
+  return <>
+    <NavLink to="/app/patients" className="back"><ArrowLeft />Все пациенты</NavLink>
+    <header className="patient-page-head">
+      <div className="patient-page-person"><span className="avatar patient-large">{initials(patient.full_name)}</span><div><span>{patient.code} · {ageFromBirthDate(patient.birth_date)} лет</span><h1>{patient.full_name}</h1><p>Дата рождения: {formatDate(patient.birth_date)}</p></div></div>
+      {patient.current_route ? <div className="patient-page-summary"><span className={`registry-status ${patient.current_route.status}`}>{patient.current_route.status_label}</span><div><small>Ближайший срок</small><strong>{formatDate(patient.current_route.due_date)}</strong></div><div><small>Главное действие</small><strong>{patient.current_route.next_step?.title ?? 'Маршрут завершён'}</strong></div></div> : <span className="registry-status none">Маршрут не создан</span>}
+    </header>
+    <div className="patient-route-switcher">
+      <div>{routes.map((route) => <button className={route.id === selectedRouteId ? 'active' : ''} onClick={() => selectRoute(route.id)} key={route.id}><span>{route.study_type}</span><small>{route.status_label} · {formatDate(route.due_date)}</small></button>)}</div>
+      <CreateRouteControl patientId={patient.id} hasRoutes={routes.length > 0} onCreated={(routeId) => { reload(); selectRoute(routeId) }} />
+    </div>
+    {selectedRouteId ? <PatientRouteWorkspace routeId={selectedRouteId} onPatientReload={reload} /> : <section className="panel patient-no-route"><RouteIcon /><h2>У пациента пока нет маршрута</h2><p>В деморежиме можно выбрать только заранее утверждённый синтетический план.</p></section>}
+  </>
+}
+
+function CreateRouteControl({ patientId, hasRoutes, onCreated }: { patientId: number; hasRoutes: boolean; onCreated: (routeId: number) => void }) {
+  const { data: plans } = useLoad<RoutePlan[]>(() => api('/route-plans/'))
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  if (!plans?.length) return null
+  const plan = plans[0]
+  const create = async () => {
+    setBusy(true); setError('')
+    try { const route = await post<RouteDetail>(`/patients/${patientId}/routes/`, { plan_id: plan.id }); onCreated(route.id); setOpen(false) }
+    catch (reason) { setError((reason as Error).message) }
+    finally { setBusy(false) }
+  }
+  return <div className="route-create-control"><button className="button secondary" onClick={() => setOpen(!open)}><RouteIcon />{hasRoutes ? 'Добавить демо-маршрут' : 'Создать демо-маршрут'}</button>{open && <div className="route-plan-popover"><b>{plan.title}</b><p>{plan.description}</p><ol>{plan.steps.map((step) => <li key={step.title}>{step.title}<small>срок через {step.due_in_days} дн.</small></li>)}</ol><button disabled={busy} className="button primary" onClick={create}>{busy ? 'Создаём…' : 'Применить утверждённый план'}</button>{error && <p className="form-message error" role="alert">{error}</p>}</div>}</div>
+}
+
+function PatientRouteWorkspace({ routeId, onPatientReload }: { routeId: number; onPatientReload: () => void }) {
+  const { data: route, error, reload } = useLoad<RouteDetail>(() => api(`/routes/${routeId}/`), [routeId])
+  const { data: employees } = useLoad<Employee[]>(() => api('/employees/'))
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+  if (error) return <ErrorState error={error} retry={reload} />
+  if (!route) return <Loading rows={7} />
+  const act = async (fn: () => Promise<unknown>, success: string) => {
+    setBusy(true); setMessage('')
+    try { await fn(); setMessage(success); reload(); onPatientReload() } catch (reason) { setMessage((reason as Error).message) }
+    finally { setBusy(false) }
+  }
+  const currentStepIndex = route.steps.findIndex((step) => step.status !== 'completed')
+  return <>
+    <section className="route-context-strip"><div><small>Маршрут</small><strong>{route.study_type}</strong></div><div><small>Ответственный</small><strong>{route.assignee_name ?? 'Не назначен'}</strong></div><div><small>Следующее действие</small><strong>{route.next_step?.title ?? 'Все этапы выполнены'}</strong></div><PriorityBadge priority={route.priority} /></section>
+    {message && <div className={message.includes('Не ') || message.includes('нельзя') ? 'notice error-notice' : 'notice'}>{message}</div>}
+    <div className="detail-grid patient-workspace-grid"><div className="detail-main">
+      <section className="panel"><PanelHead title="Маршрут пациента" />{route.status === 'draft' && <button disabled={busy} className="button primary" onClick={() => act(() => post(`/routes/${route.id}/confirm/`), 'Маршрут подтверждён')}>Подтвердить маршрут</button>}<div className="timeline">{route.steps.map((step, index) => <StepCard key={step.id} step={step} index={index} routeStatus={route.status} isCurrent={index === currentStepIndex} onDone={() => act(() => post(`/steps/${step.id}/complete/`), 'Шаг выполнен')} onDocument={() => act(() => post(`/steps/${step.id}/documents/`, { label: 'Синтетическое подтверждение' }), 'Подтверждение добавлено')} onBook={() => { reload(); onPatientReload() }} />)}</div></section>
+      <DocumentsPanel route={route} onSaved={reload} />
+      <section className="panel"><PanelHead title="Заключение специалиста" /><div className="clinical-note"><ShieldCheck /><p>{route.conclusion}</p></div><small className="muted">Синтетические данные. RouteGuard не интерпретирует заключение и не формирует назначения.</small></section>
+      <ContactHistory contacts={route.contacts} />
+      <section className="panel"><PanelHead title="История действий" /><div className="history">{route.events.map((event) => <div key={event.id}><i /><div><b>{event.message}</b><span>{event.author} · {formatDate(event.occurred_at, true)}</span></div></div>)}</div></section>
+    </div><aside className="detail-side">
+      <section className="panel sticky"><div className="assistant-title"><span><PhoneCall /></span><div><small>Помощник координатора</small><h2>{route.call_assistant.scenario}</h2></div></div><p><b>Причина контакта:</b> {route.call_assistant.goal}</p>{route.call_assistant.next_task && <div className="assistant-next-task"><Clock3 /><span><small>Следующая задача</small><b>{route.call_assistant.next_task.title}</b><time>{formatDate(route.call_assistant.next_task.due_at, true)}</time></span></div>}<div className="script"><small>Начало разговора</small><p>{route.call_assistant.opening}</p><small>Уточнить</small><ul>{route.call_assistant.questions.map((question) => <li key={question}>{question}</li>)}</ul><small>Предложение</small><p>{route.call_assistant.offer}</p></div><CallResult routeId={route.id} onSaved={reload} /><p className="disclaimer">{route.call_assistant.disclaimer}</p></section>
+      <section className="panel"><h2>Ответственный</h2><select value={route.assignee ?? ''} onChange={(event) => act(() => post(`/routes/${route.id}/assign/`, { employee_id: Number(event.target.value) }), 'Ответственный назначен')}><option value="">Не назначен</option>{employees?.map((employee) => <option key={employee.id} value={employee.id}>{employee.full_name}</option>)}</select></section>
+      <section className="panel"><PanelHead title="Комментарий" /><CommentForm routeId={route.id} onSaved={reload} /></section>
+    </aside></div>
+  </>
+}
+
+function DocumentsPanel({ route, onSaved }: { route: RouteDetail; onSaved: () => void }) {
+  const [stepId, setStepId] = useState(String(route.next_step?.id ?? route.steps[0]?.id ?? ''))
+  const [kind, setKind] = useState('result')
+  const [label, setLabel] = useState('')
+  const [file, setFile] = useState<File | null>(null)
+  const [state, setState] = useState({ busy: false, message: '', error: false })
+  const documents = route.steps.flatMap((step) => step.documents.map((document) => ({ ...document, stepTitle: step.title })))
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!file || !stepId) return
+    setState({ busy: true, message: 'Загружаем…', error: false })
+    const body = new FormData(); body.set('label', label); body.set('kind', kind); body.set('file', file)
+    try { await api(`/steps/${stepId}/documents/`, { method: 'POST', body }); setState({ busy: false, message: 'Синтетический документ добавлен', error: false }); setLabel(''); setFile(null); onSaved() }
+    catch (reason) { setState({ busy: false, message: (reason as Error).message, error: true }) }
+  }
+  return <section className="panel documents-panel"><PanelHead title="Документы" /><div className="document-categories"><span><FileText />Заключение специалиста доступно ниже</span>{documents.map((document) => <article key={document.id}><span><FolderOpen /></span><div><b>{document.label}</b><small>{document.kind_label} · {document.stepTitle}{document.size ? ` · ${Math.ceil(document.size / 1024)} КБ` : ''}</small></div>{document.download_url ? <a className="button ghost small" href={document.download_url} target="_blank" rel="noreferrer">Открыть</a> : <span className="document-metadata">Запись без файла</span>}</article>)}</div><form className="document-upload" onSubmit={submit}><h3>Добавить синтетический документ</h3><p>PDF, PNG, JPG или TXT до 1 МБ. Не загружайте реальные медицинские данные.</p><div><label>Этап<select value={stepId} onChange={(event) => setStepId(event.target.value)}>{route.steps.map((step) => <option key={step.id} value={step.id}>{step.title}</option>)}</select></label><label>Тип<select value={kind} onChange={(event) => setKind(event.target.value)}><option value="conclusion">Врачебное заключение</option><option value="referral">Направление</option><option value="result">Результат исследования</option><option value="confirmation">Подтверждение этапа</option></select></label></div><label>Название<input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Например, синтетический результат" /></label><label className="file-input"><Upload /><span>{file?.name ?? 'Выбрать файл'}</span><input required accept=".pdf,.png,.jpg,.jpeg,.txt" type="file" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /></label><button disabled={state.busy || !file} className="button secondary" type="submit">Добавить документ</button>{state.message && <small className={state.error ? 'form-message error' : 'form-message'} role={state.error ? 'alert' : 'status'}>{state.message}</small>}</form></section>
+}
+
 function RoutesPage() {
   const [params] = useSearchParams()
   const initialSearch = params.get('search') ?? ''
@@ -421,7 +576,7 @@ function RoutesPage() {
   const { data: employees } = useLoad<Employee[]>(() => api('/employees/'))
   const { data, error, reload } = useLoad<RouteRow[]>(() => api(`/routes/?search=${encodeURIComponent(search)}&status=${status}&attention_reason=${attention}&assignee=${assignee}`), [search, status, attention, assignee])
   useEffect(() => setSearch(initialSearch), [initialSearch])
-  return <div className={selectedId ? 'workbench drawer-open' : 'workbench'}><div className="workspace-main"><PageHead eyebrow="Единый реестр" title="Маршруты пациентов" text="Следующий шаг, срок и ответственный в одной очереди." /><div className="filter-bar"><label className="search field-search"><Search /><span className="sr-only">Поиск маршрута</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ФИО, код пациента или UID" /></label><select aria-label="Статус" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">Все статусы</option><option value="draft">Черновики</option><option value="active">В работе</option><option value="completed">Завершены</option></select><select aria-label="Причина внимания" value={attention} onChange={(event) => setAttention(event.target.value)}><option value="">Любая причина</option><option value="overdue">Просрочен</option><option value="cancelled">Отмена</option><option value="missed">Неявка</option><option value="no_slot">Нет слота</option><option value="no_assignee">Нет ответственного</option><option value="no_document">Нет документа</option></select><select aria-label="Ответственный" value={assignee} onChange={(event) => setAssignee(event.target.value)}><option value="">Все сотрудники</option>{employees?.map((employee) => <option value={employee.id} key={employee.id}>{employee.full_name}</option>)}</select></div><section className="queue-surface">{error ? <ErrorState error={error} retry={reload} /> : !data ? <Loading /> : data.length ? <RouteTable rows={data} selectedId={selectedId} onSelect={setSelectedId} /> : <Empty text="Маршруты не найдены" detail="Измените поисковый запрос или фильтры." />}</section></div>{selectedId && <PatientDrawer routeId={selectedId} onClose={() => setSelectedId(null)} />}</div>
+  return <div className="workbench"><div className="workspace-main"><PageHead eyebrow="Единый реестр" title="Маршруты пациентов" text="Следующий шаг, срок и ответственный в одной очереди." /><div className="filter-bar"><label className="search field-search"><Search /><span className="sr-only">Поиск маршрута</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ФИО, код пациента или UID" /></label><select aria-label="Статус" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">Все статусы</option><option value="draft">Черновики</option><option value="active">В работе</option><option value="completed">Завершены</option></select><select aria-label="Причина внимания" value={attention} onChange={(event) => setAttention(event.target.value)}><option value="">Любая причина</option><option value="overdue">Просрочен</option><option value="cancelled">Отмена</option><option value="missed">Неявка</option><option value="no_slot">Нет слота</option><option value="no_assignee">Нет ответственного</option><option value="no_document">Нет документа</option></select><select aria-label="Ответственный" value={assignee} onChange={(event) => setAssignee(event.target.value)}><option value="">Все сотрудники</option>{employees?.map((employee) => <option value={employee.id} key={employee.id}>{employee.full_name}</option>)}</select></div><section className="queue-surface">{error ? <ErrorState error={error} retry={reload} /> : !data ? <Loading /> : data.length ? <RouteTable rows={data} /> : <Empty text="Маршруты не найдены" detail="Измените поисковый запрос или фильтры." />}</section></div></div>
 }
 
 function RouteDetailPage() {
@@ -471,7 +626,7 @@ function StepCard({ step, index, routeStatus, isCurrent, onDone, onDocument, onB
     setBooking(true)
     try { await post(`/appointments/${appointmentId}/status/`, { status, reason: status === 'cancelled' ? 'Отменено координатором' : 'Пациент не пришёл' }); setNotice(status === 'cancelled' ? 'Запись отменена, шаг возвращён в работу' : 'Неявка сохранена, шаг возвращён в работу'); onBook() } catch (reason) { setNotice((reason as Error).message) } finally { setBooking(false) }
   }
-  return <article className={`step ${step.status}`}><div className="step-index">{step.status === 'completed' ? <Check /> : index + 1}</div><div className="step-body"><div className="step-top"><div><span>{step.service_name}</span><h3>{step.title}</h3></div><span className="status-chip">{step.status === 'completed' ? 'Выполнен' : step.status === 'scheduled' ? 'Запланирован' : 'Ожидает'}</span></div><p className="muted">Срок: {formatDate(step.due_date)}</p>{scheduled && <div className="appointment"><CalendarDays /><div><b>{formatDate(scheduled.slot.starts_at, true)}</b><span>{scheduled.slot.facility_name} · {scheduled.slot.specialist_name}</span></div></div>}{previousAppointments.length > 0 && <div className="appointment-history"><b>История записей</b>{previousAppointments.map((appointment) => <div key={appointment.id}><span className={`appointment-status ${appointment.status}`}>{appointmentStatus[appointment.status] || appointment.status}</span><span><time dateTime={appointment.slot.starts_at}>{formatDate(appointment.slot.starts_at, true)}</time><small>{appointment.slot.facility_name}{appointment.reason ? ` · ${appointment.reason}` : ''}</small></span></div>)}</div>}{step.documents.map((document) => <div className="document" key={document.id}><Check />{document.label}</div>)}{notice && <p className="inline-note" role="status">{notice}</p>}{isFuture && <p className="step-lock"><Clock3 />Сначала завершите предыдущий этап.</p>}{routeStatus === 'draft' && step.status !== 'completed' && <p className="step-lock"><Clock3 />Действия станут доступны после подтверждения маршрута.</p>}<div className="step-actions">{canAct && step.status === 'pending' && <button className="button secondary small" onClick={() => setShowSlots(!showSlots)}>Выбрать слот</button>}{canAct && <button className="button ghost small" onClick={onDone}>Отметить выполненным</button>}{canAct && scheduled && <button disabled={booking} className="button ghost small danger" onClick={() => updateAppointment(scheduled.id, 'cancelled')}>Отменить запись</button>}{canAct && scheduled && <button disabled={booking} className="button ghost small" onClick={() => updateAppointment(scheduled.id, 'missed')}>Отметить неявку</button>}{isFuture && step.status === 'pending' && <button className="button secondary small" disabled>Выбрать слот</button>}{isFuture && <button className="button ghost small" disabled>Отметить выполненным</button>}{routeStatus === 'active' && step.status === 'completed' && step.confirmation_required && !step.documents.length && <button className="button secondary small" onClick={onDocument}>Добавить подтверждение</button>}</div>{canAct && showSlots && <div className="slot-picker"><b>Свободное время</b>{error ? <ErrorState error={error} /> : !slots ? <Loading rows={2} /> : slots.length ? slots.slice(0, 8).map((slot) => <button disabled={booking} onClick={() => book(slot.id)} key={slot.id}><span><b>{formatDate(slot.starts_at, true)}</b><small>{slot.facility_name} · {slot.specialist_name}</small></span><ChevronRight /></button>) : <Empty text="Свободных слотов нет" />}</div>}</div></article>
+  return <article className={`step ${step.status}`}><div className="step-index">{step.status === 'completed' ? <Check /> : index + 1}</div><div className="step-body"><div className="step-top"><div><span>{step.service_name}</span><h3>{step.title}</h3></div><span className="status-chip">{step.status === 'completed' ? 'Выполнен' : step.status === 'scheduled' ? 'Запланирован' : 'Ожидает'}</span></div><div className="step-dates"><span><small>Плановый срок</small><b>{formatDate(step.due_date)}</b></span><span><small>Фактическое выполнение</small><b>{step.completed_at ? formatDate(step.completed_at, true) : 'Не выполнен'}</b></span></div>{scheduled && <div className="appointment"><CalendarDays /><div><b>{formatDate(scheduled.slot.starts_at, true)}</b><span>{scheduled.slot.facility_name} · {scheduled.slot.specialist_name}</span></div></div>}{previousAppointments.length > 0 && <div className="appointment-history"><b>История записей</b>{previousAppointments.map((appointment) => <div key={appointment.id}><span className={`appointment-status ${appointment.status}`}>{appointmentStatus[appointment.status] || appointment.status}</span><span><time dateTime={appointment.slot.starts_at}>{formatDate(appointment.slot.starts_at, true)}</time><small>{appointment.slot.facility_name}{appointment.reason ? ` · ${appointment.reason}` : ''}</small></span></div>)}</div>}{step.documents.map((document) => document.download_url ? <a className="document" href={document.download_url} target="_blank" rel="noreferrer" key={document.id}><FileText />{document.label}</a> : <div className="document" key={document.id}><Check />{document.label}</div>)}{notice && <p className="inline-note" role="status">{notice}</p>}{isFuture && <p className="step-lock"><Clock3 />Сначала завершите предыдущий этап.</p>}{routeStatus === 'draft' && step.status !== 'completed' && <p className="step-lock"><Clock3 />Действия станут доступны после подтверждения маршрута.</p>}<div className="step-actions">{canAct && step.status === 'pending' && <button className="button secondary small" onClick={() => setShowSlots(!showSlots)}>Выбрать слот</button>}{canAct && <button className="button ghost small" onClick={onDone}>Отметить выполненным</button>}{canAct && scheduled && <button disabled={booking} className="button ghost small danger" onClick={() => updateAppointment(scheduled.id, 'cancelled')}>Отменить запись</button>}{canAct && scheduled && <button disabled={booking} className="button ghost small" onClick={() => updateAppointment(scheduled.id, 'missed')}>Отметить неявку</button>}{isFuture && step.status === 'pending' && <button className="button secondary small" disabled>Выбрать слот</button>}{isFuture && <button className="button ghost small" disabled>Отметить выполненным</button>}{routeStatus === 'active' && step.status === 'completed' && step.confirmation_required && !step.documents.length && <button className="button secondary small" onClick={onDocument}>Добавить подтверждение</button>}</div>{canAct && showSlots && <div className="slot-picker"><b>Свободное время</b>{error ? <ErrorState error={error} /> : !slots ? <Loading rows={2} /> : slots.length ? slots.slice(0, 8).map((slot) => <button disabled={booking} onClick={() => book(slot.id)} key={slot.id}><span><b>{formatDate(slot.starts_at, true)}</b><small>{slot.facility_name} · {slot.specialist_name}</small></span><ChevronRight /></button>) : <Empty text="Свободных слотов нет" />}</div>}</div></article>
 }
 
 function CommentForm({ routeId, onSaved }: { routeId: number; onSaved: () => void }) {
@@ -524,7 +679,7 @@ function TasksPage() {
   const [status, setStatus] = useState('open')
   const { data, error, reload } = useLoad<Task[]>(() => api(`/tasks/?status=${status}`), [status])
   const done = async (id: number) => { await post(`/tasks/${id}/complete/`); reload() }
-  return <><PageHead eyebrow="Персональная очередь" title="Задачи" text="Повторные звонки и следующие действия с понятным сроком." /><div className="tabs"><button className={status === 'open' ? 'active' : ''} onClick={() => setStatus('open')}>Открытые</button><button className={status === 'done' ? 'active' : ''} onClick={() => setStatus('done')}>Выполненные</button></div><section className="panel task-list">{error ? <ErrorState error={error} retry={reload} /> : !data ? <Loading /> : data.length ? data.map((task) => <article key={task.id}><div className="task-check">{task.status === 'done' ? <Check /> : <Clock3 />}</div><div><NavLink to={`/app/routes/${task.route_id}`}>{task.title}</NavLink><span>{task.patient_code} · {task.patient_name}</span></div><time>{formatDate(task.due_at, true)}</time><span className="muted">{task.assignee_name ?? 'Без ответственного'}</span>{task.status === 'open' && <button className="button secondary small" onClick={() => done(task.id)}>Выполнено</button>}</article>) : <Empty text="Задач в этой группе нет" />}</section></>
+  return <><PageHead eyebrow="Персональная очередь" title="Задачи" text="Повторные звонки и следующие действия с понятным сроком." /><div className="tabs"><button className={status === 'open' ? 'active' : ''} onClick={() => setStatus('open')}>Открытые</button><button className={status === 'done' ? 'active' : ''} onClick={() => setStatus('done')}>Выполненные</button></div><section className="panel task-list">{error ? <ErrorState error={error} retry={reload} /> : !data ? <Loading /> : data.length ? data.map((task) => <article key={task.id}><div className="task-check">{task.status === 'done' ? <Check /> : <Clock3 />}</div><div><NavLink to={`/app/patients/${task.patient_id}?route=${task.route_id}`}>{task.title}</NavLink><span>{task.patient_code} · {task.patient_name}</span></div><time>{formatDate(task.due_at, true)}</time><span className="muted">{task.assignee_name ?? 'Без ответственного'}</span>{task.status === 'open' && <button className="button secondary small" onClick={() => done(task.id)}>Выполнено</button>}</article>) : <Empty text="Задач в этой группе нет" />}</section></>
 }
 
 function SchedulePage() {
@@ -579,7 +734,7 @@ function ProtectedApp() {
   const location = useLocation()
   if (!session) return <div className="center-screen"><Loading /></div>
   if (!session.workspace) return <AccessScreen />
-  return <AppShell><Routes location={location}><Route index element={<Dashboard />} /><Route path="routes" element={<RoutesPage />} /><Route path="routes/:id" element={<RouteDetailPage />} /><Route path="tasks" element={<TasksPage />} /><Route path="schedule" element={<SchedulePage />} /><Route path="analytics" element={<Suspense fallback={<Loading />}><AnalyticsPage /></Suspense>} /><Route path="scenarios" element={<ScenariosPage />} /><Route path="settings" element={<SettingsPage />} /><Route path="*" element={<Navigate to="/app" replace />} /></Routes></AppShell>
+  return <AppShell><Routes location={location}><Route index element={<Dashboard />} /><Route path="patients" element={<PatientsPage />} /><Route path="patients/new" element={<PatientCreatePage />} /><Route path="patients/:id" element={<PatientPage />} /><Route path="routes" element={<Navigate to="/app/patients" replace />} /><Route path="routes/:id" element={<RouteDetailPage />} /><Route path="tasks" element={<TasksPage />} /><Route path="schedule" element={<SchedulePage />} /><Route path="analytics" element={<Suspense fallback={<Loading />}><AnalyticsPage /></Suspense>} /><Route path="scenarios" element={<ScenariosPage />} /><Route path="settings" element={<SettingsPage />} /><Route path="*" element={<Navigate to="/app" replace />} /></Routes></AppShell>
 }
 
 export default function App() {

@@ -1,12 +1,54 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
+from pathlib import Path
+import re
+import uuid
 
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from .exceptions import DomainError
-from .models import ActionKey, Appointment, AuditEvent, ContactResult, Document, Route, RouteStep, ScheduleSlot, Task, Workspace
+from .models import ActionKey, Appointment, AuditEvent, ContactResult, Document, Patient, Route, RouteStep, ScheduleSlot, Study, Task, Workspace
+
+
+APPROVED_DEMO_ROUTE_PLANS = {
+    "follow-up-consultation": {
+        "id": "follow-up-consultation",
+        "title": "Контроль после исследования",
+        "description": "Синтетический план: консультация по результатам и контрольный этап.",
+        "study_type": "Демонстрационное исследование",
+        "conclusion": "Синтетическое заключение: специалист подтвердил организационный план контрольного наблюдения. Не является медицинским документом.",
+        "steps": [
+            {"title": "Консультация по результатам", "service": "Консультация по результатам", "days": 3, "confirmation_required": False},
+            {"title": "Контрольное исследование", "service": "Контрольное исследование", "days": 10, "confirmation_required": True},
+        ],
+    }
+}
+
+ALLOWED_DOCUMENT_TYPES = {
+    "application/pdf": {".pdf"},
+    "image/png": {".png"},
+    "image/jpeg": {".jpg", ".jpeg"},
+    "text/plain": {".txt"},
+}
+MAX_DOCUMENT_SIZE = 1024 * 1024
+
+
+def document_content_matches_type(content: bytes, content_type: str) -> bool:
+    if content_type == "application/pdf":
+        return content.startswith(b"%PDF-")
+    if content_type == "image/png":
+        return content.startswith(b"\x89PNG\r\n\x1a\n")
+    if content_type == "image/jpeg":
+        return content.startswith(b"\xff\xd8\xff")
+    if content_type == "text/plain":
+        try:
+            content.decode("utf-8")
+        except UnicodeDecodeError:
+            return False
+        return b"\x00" not in content
+    return False
 
 
 def audit(workspace: Workspace, route: Route | None, event_type: str, message: str, author: str) -> None:
@@ -26,6 +68,110 @@ def author_name(workspace, user) -> str:
     if getattr(user, "is_authenticated", False):
         return user.get_full_name() or user.username
     return "Гость деморежима"
+
+
+def public_demo_route_plans() -> list[dict]:
+    return [
+        {
+            "id": plan["id"],
+            "title": plan["title"],
+            "description": plan["description"],
+            "steps": [{"title": step["title"], "due_in_days": step["days"]} for step in plan["steps"]],
+        }
+        for plan in APPROVED_DEMO_ROUTE_PLANS.values()
+    ]
+
+
+def normalize_patient_name(value: str) -> str:
+    return " ".join((value or "").split())
+
+
+@transaction.atomic
+def register_patient(workspace: Workspace, full_name: str, birth_date_value, user) -> Patient:
+    full_name = normalize_patient_name(full_name)
+    if len(full_name) < 5 or len(full_name) > 180 or not re.search(r"[A-Za-zА-Яа-яЁё]", full_name):
+        raise DomainError("Укажите полное имя пациента.")
+    try:
+        birth_date = date.fromisoformat(str(birth_date_value))
+    except (TypeError, ValueError) as exc:
+        raise DomainError("Укажите корректную дату рождения.") from exc
+    today = workspace.demo_date if workspace.kind == Workspace.Kind.DEMO else timezone.localdate()
+    if birth_date >= today or birth_date < today - timedelta(days=365 * 120):
+        raise DomainError("Дата рождения находится вне допустимого диапазона.")
+
+    Workspace.objects.select_for_update().get(pk=workspace.pk)
+    normalized = full_name.casefold()
+    existing = Patient.objects.filter(workspace=workspace, normalized_name=normalized, birth_date=birth_date).first()
+    if existing:
+        raise DomainError(
+            f"Пациент с таким ФИО и датой рождения уже зарегистрирован: {existing.code}.",
+            code="duplicate_patient",
+            status_code=409,
+        )
+    max_number = 0
+    for code in Patient.objects.filter(workspace=workspace).values_list("code", flat=True):
+        match = re.fullmatch(r"P(\d+)", code)
+        if match:
+            max_number = max(max_number, int(match.group(1)))
+    code = f"P{max_number + 1:03d}"
+    try:
+        return Patient.objects.create(workspace=workspace, code=code, full_name=full_name, birth_date=birth_date)
+    except IntegrityError as exc:
+        raise DomainError("Пациент уже зарегистрирован.", code="duplicate_patient", status_code=409) from exc
+
+
+@transaction.atomic
+def create_approved_demo_route(workspace: Workspace, patient_id: int, plan_id: str, user) -> Route:
+    if workspace.kind != Workspace.Kind.DEMO:
+        raise DomainError("Синтетические планы доступны только в деморежиме.", status_code=403)
+    plan = APPROVED_DEMO_ROUTE_PLANS.get(plan_id)
+    if not plan:
+        raise DomainError("Выберите утверждённый демонстрационный план.")
+    patient = Patient.objects.select_for_update().get(pk=patient_id, workspace=workspace)
+    duplicate = Route.objects.filter(
+        workspace=workspace,
+        patient=patient,
+        status__in=[Route.Status.DRAFT, Route.Status.ACTIVE],
+        study__study_type=plan["study_type"],
+    ).first()
+    if duplicate:
+        raise DomainError("Для пациента уже существует активный маршрут этого типа.", code="duplicate_route", status_code=409)
+
+    today = workspace.demo_date
+    study = Study.objects.create(
+        workspace=workspace,
+        patient=patient,
+        uid=f"DEMO-{patient.code}-{uuid.uuid4().hex[:10].upper()}",
+        study_type=plan["study_type"],
+        study_date=today,
+        conclusion=plan["conclusion"],
+    )
+    assignee = workspace.employees.filter(active=True).order_by("id").first()
+    route = Route.objects.create(
+        workspace=workspace,
+        patient=patient,
+        study=study,
+        assignee=assignee,
+        status=Route.Status.ACTIVE,
+        due_date=today + timedelta(days=max(step["days"] for step in plan["steps"])),
+    )
+    audit(workspace, route, "route_created", f"Создан синтетический маршрут: {plan['title']}", author_name(workspace, user))
+    audit(workspace, route, "route_confirmed", "Утверждённый демонстрационный план принят в работу", author_name(workspace, user))
+    for sequence, step_plan in enumerate(plan["steps"], start=1):
+        service = workspace.services.filter(name=step_plan["service"]).first()
+        if service is None:
+            raise DomainError(f"Для плана недоступна услуга: {step_plan['service']}.")
+        step = RouteStep.objects.create(
+            workspace=workspace,
+            route=route,
+            sequence=sequence,
+            title=step_plan["title"],
+            service=service,
+            due_date=today + timedelta(days=step_plan["days"]),
+            confirmation_required=step_plan["confirmation_required"],
+        )
+        audit(workspace, route, "step_added", f"Добавлен утверждённый этап: {step.title}", author_name(workspace, user))
+    return route
 
 
 def priority_info(route: Route) -> dict:
@@ -230,9 +376,42 @@ def complete_step(workspace, step_id, user):
 
 
 @transaction.atomic
-def add_document(workspace, step_id, label, user):
+def add_document(workspace, step_id, label, user, *, kind=Document.Kind.CONFIRMATION, uploaded_file=None):
     step = RouteStep.objects.select_for_update().select_related("route").get(pk=step_id, workspace=workspace)
-    document = Document.objects.create(workspace=workspace, step=step, label=label or "Синтетический демодокумент")
+    if kind not in Document.Kind.values:
+        raise DomainError("Выберите корректный тип документа.")
+    file_name = ""
+    content_type = ""
+    content = None
+    size = 0
+    if uploaded_file is not None:
+        if workspace.kind != Workspace.Kind.DEMO:
+            raise DomainError("Загрузка синтетических файлов доступна только в деморежиме.", status_code=403)
+        file_name = Path(uploaded_file.name).name[:180]
+        suffix = Path(file_name).suffix.casefold()
+        content_type = (uploaded_file.content_type or "").casefold()
+        if content_type not in ALLOWED_DOCUMENT_TYPES or suffix not in ALLOWED_DOCUMENT_TYPES[content_type]:
+            raise DomainError("Допустимы только PDF, PNG, JPG и TXT файлы.")
+        if uploaded_file.size <= 0 or uploaded_file.size > MAX_DOCUMENT_SIZE:
+            raise DomainError("Размер синтетического документа должен быть от 1 байта до 1 МБ.")
+        content = uploaded_file.read()
+        size = len(content)
+        if size != uploaded_file.size or size > MAX_DOCUMENT_SIZE:
+            raise DomainError("Не удалось безопасно прочитать документ.")
+        if not document_content_matches_type(content, content_type):
+            raise DomainError("Содержимое файла не соответствует выбранному безопасному типу.")
+    clean_label = (label or Path(file_name).stem or "Синтетический демодокумент").strip()[:240]
+    document = Document.objects.create(
+        workspace=workspace,
+        step=step,
+        label=clean_label,
+        kind=kind,
+        synthetic=True,
+        file_name=file_name,
+        content_type=content_type,
+        content=content,
+        size=size,
+    )
     audit(workspace, step.route, "document_added", f"Добавлен документ: {document.label}", author_name(workspace, user))
     recalculate_route(step.route)
     return document

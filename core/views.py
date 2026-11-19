@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import quote
 
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 from django.db import transaction
 from django.db.models import Count, Prefetch, Q
-from django.http import FileResponse, Http404
+from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -17,9 +18,9 @@ from rest_framework.response import Response
 
 from .demo import create_demo_workspace
 from .exceptions import DomainError
-from .models import Appointment, Comment, ContactResult, Employee, Membership, Route, RouteStep, ScheduleSlot, Study, Task, Workspace
-from .serializers import EmployeeSerializer, RouteDetailSerializer, RouteListSerializer, SlotSerializer, TaskSerializer
-from .services import add_document, assign_route, author_name, audit, book_slot, complete_step, confirm_route, ensure_follow_up_task, priority_info, save_contact
+from .models import Appointment, Comment, ContactResult, Document, Employee, Membership, Patient, Route, RouteStep, ScheduleSlot, Study, Task, Workspace
+from .serializers import EmployeeSerializer, PatientDetailSerializer, PatientListSerializer, RouteDetailSerializer, RouteListSerializer, SlotSerializer, TaskSerializer
+from .services import add_document, assign_route, author_name, audit, book_slot, complete_step, confirm_route, create_approved_demo_route, ensure_follow_up_task, priority_info, public_demo_route_plans, register_patient, save_contact
 from .workspace import cleanup_expired_demo_workspaces, get_workspace
 
 
@@ -102,6 +103,55 @@ def route_queryset(workspace):
             "comments",
         )
     )
+
+
+def patient_queryset(workspace):
+    return Patient.objects.filter(workspace=workspace).prefetch_related(
+        Prefetch("routes", queryset=route_queryset(workspace).order_by("created_at", "id"))
+    )
+
+
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+def patients_view(request):
+    workspace = get_workspace(request)
+    if request.method == "POST":
+        patient = register_patient(
+            workspace,
+            request.data.get("full_name", ""),
+            request.data.get("birth_date"),
+            request.user,
+        )
+        return Response(PatientDetailSerializer(patient_queryset(workspace).get(pk=patient.id)).data, status=201)
+    queryset = patient_queryset(workspace)
+    search = request.query_params.get("search", "").strip()
+    if search:
+        queryset = queryset.filter(Q(full_name__icontains=search) | Q(code__icontains=search))
+    return Response(PatientListSerializer(queryset.order_by("full_name", "id"), many=True).data)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def patient_detail(request, patient_id):
+    workspace = get_workspace(request)
+    patient = get_object_or_404(patient_queryset(workspace), pk=patient_id)
+    return Response(PatientDetailSerializer(patient).data)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def route_plans(request):
+    workspace = get_workspace(request)
+    return Response(public_demo_route_plans() if workspace.kind == Workspace.Kind.DEMO else [])
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def patient_create_route(request, patient_id):
+    workspace = get_workspace(request)
+    get_object_or_404(Patient, pk=patient_id, workspace=workspace)
+    route = create_approved_demo_route(workspace, patient_id, request.data.get("plan_id", ""), request.user)
+    return Response(RouteDetailSerializer(route_queryset(workspace).get(pk=route.id)).data, status=201)
 
 
 @api_view(["GET"])
@@ -221,8 +271,29 @@ def step_complete(request, step_id):
 @permission_classes([AllowAny])
 def step_document(request, step_id):
     workspace = get_workspace(request)
-    document = add_document(workspace, step_id, request.data.get("label", ""), request.user)
-    return Response({"id": document.id, "label": document.label}, status=201)
+    document = add_document(
+        workspace,
+        step_id,
+        request.data.get("label", ""),
+        request.user,
+        kind=request.data.get("kind", Document.Kind.CONFIRMATION),
+        uploaded_file=request.FILES.get("file"),
+    )
+    return Response({"id": document.id, "label": document.label, "download_url": f"/api/documents/{document.id}/content/" if document.content else None}, status=201)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def document_content(request, document_id):
+    workspace = get_workspace(request)
+    document = get_object_or_404(Document, pk=document_id, workspace=workspace, synthetic=True)
+    if not document.content:
+        raise Http404("Document content is not available")
+    response = HttpResponse(bytes(document.content), content_type=document.content_type or "application/octet-stream")
+    response["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(document.file_name or 'document')}"
+    response["X-Content-Type-Options"] = "nosniff"
+    response["Cache-Control"] = "private, no-store"
+    return response
 
 
 @api_view(["POST"])

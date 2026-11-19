@@ -64,11 +64,20 @@ class Patient(models.Model):
     workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="patients")
     code = models.CharField(max_length=24)
     full_name = models.CharField(max_length=180)
+    normalized_name = models.CharField(max_length=180, editable=False)
     birth_date = models.DateField()
 
     class Meta:
         ordering = ["code"]
-        constraints = [models.UniqueConstraint(fields=["workspace", "code"], name="uq_patient_code_workspace")]
+        constraints = [
+            models.UniqueConstraint(fields=["workspace", "code"], name="uq_patient_code_workspace"),
+            models.UniqueConstraint(fields=["workspace", "normalized_name", "birth_date"], name="uq_patient_identity_workspace"),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.full_name = " ".join(self.full_name.split())
+        self.normalized_name = self.full_name.casefold()
+        super().save(*args, **kwargs)
 
 
 class Study(models.Model):
@@ -252,10 +261,21 @@ class ContactResult(models.Model):
 
 
 class Document(models.Model):
+    class Kind(models.TextChoices):
+        CONCLUSION = "conclusion", "Врачебное заключение"
+        REFERRAL = "referral", "Направление"
+        RESULT = "result", "Результат исследования"
+        CONFIRMATION = "confirmation", "Подтверждение этапа"
+
     workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="documents")
     step = models.ForeignKey(RouteStep, on_delete=models.CASCADE, related_name="documents")
     label = models.CharField(max_length=240)
+    kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.CONFIRMATION)
     synthetic = models.BooleanField(default=True)
+    file_name = models.CharField(max_length=180, blank=True)
+    content_type = models.CharField(max_length=80, blank=True)
+    content = models.BinaryField(null=True, blank=True)
+    size = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
 

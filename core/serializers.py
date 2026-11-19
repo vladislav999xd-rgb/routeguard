@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from .call_assistant import build_call_assistant
-from .models import Appointment, AuditEvent, Comment, ContactResult, Document, Employee, Route, RouteStep, ScheduleSlot, Task
+from .models import Appointment, AuditEvent, Comment, ContactResult, Document, Employee, Patient, Route, RouteStep, ScheduleSlot, Task
 from .services import priority_info
 
 
@@ -31,9 +31,15 @@ class AppointmentSerializer(serializers.ModelSerializer):
 
 
 class DocumentSerializer(serializers.ModelSerializer):
+    kind_label = serializers.CharField(source="get_kind_display", read_only=True)
+    download_url = serializers.SerializerMethodField()
+
     class Meta:
         model = Document
-        fields = ["id", "label", "synthetic", "created_at"]
+        fields = ["id", "label", "kind", "kind_label", "synthetic", "file_name", "content_type", "size", "download_url", "created_at"]
+
+    def get_download_url(self, obj):
+        return f"/api/documents/{obj.id}/content/" if obj.content else None
 
 
 class StepSerializer(serializers.ModelSerializer):
@@ -47,6 +53,7 @@ class StepSerializer(serializers.ModelSerializer):
 
 
 class TaskSerializer(serializers.ModelSerializer):
+    patient_id = serializers.IntegerField(source="route.patient.id", read_only=True)
     patient_code = serializers.CharField(source="route.patient.code", read_only=True)
     patient_name = serializers.CharField(source="route.patient.full_name", read_only=True)
     route_id = serializers.IntegerField(source="route.id", read_only=True)
@@ -54,7 +61,7 @@ class TaskSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Task
-        fields = ["id", "route_id", "patient_code", "patient_name", "kind", "title", "due_at", "status", "assignee", "assignee_name", "completed_at"]
+        fields = ["id", "route_id", "patient_id", "patient_code", "patient_name", "kind", "title", "due_at", "status", "assignee", "assignee_name", "completed_at"]
 
 
 class EventSerializer(serializers.ModelSerializer):
@@ -79,6 +86,7 @@ class ContactResultSerializer(serializers.ModelSerializer):
 
 
 class RouteListSerializer(serializers.ModelSerializer):
+    patient_id = serializers.IntegerField(source="patient.id", read_only=True)
     patient_code = serializers.CharField(source="patient.code", read_only=True)
     patient_name = serializers.CharField(source="patient.full_name", read_only=True)
     birth_date = serializers.DateField(source="patient.birth_date", read_only=True)
@@ -93,7 +101,7 @@ class RouteListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Route
-        fields = ["id", "patient_code", "patient_name", "birth_date", "study_type", "study_uid", "study_id", "assignee", "assignee_name", "status", "status_label", "attention_reason", "attention_label", "due_date", "return_reason", "created_at", "completed_at", "priority", "next_step"]
+        fields = ["id", "patient_id", "patient_code", "patient_name", "birth_date", "study_type", "study_uid", "study_id", "assignee", "assignee_name", "status", "status_label", "attention_reason", "attention_label", "due_date", "return_reason", "created_at", "completed_at", "priority", "next_step"]
 
     def get_priority(self, obj):
         return priority_info(obj)
@@ -120,3 +128,28 @@ class RouteDetailSerializer(RouteListSerializer):
 
     def get_call_assistant(self, obj):
         return build_call_assistant(obj)
+
+
+class PatientListSerializer(serializers.ModelSerializer):
+    routes_count = serializers.SerializerMethodField()
+    current_route = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Patient
+        fields = ["id", "code", "full_name", "birth_date", "routes_count", "current_route"]
+
+    def get_routes_count(self, obj):
+        return len(obj.routes.all())
+
+    def get_current_route(self, obj):
+        routes = list(obj.routes.all())
+        active = [route for route in routes if route.status in {Route.Status.DRAFT, Route.Status.ACTIVE}]
+        selected = sorted(active, key=lambda route: (-priority_info(route)["score"], route.due_date, route.id))[0] if active else (routes[-1] if routes else None)
+        return RouteListSerializer(selected).data if selected else None
+
+
+class PatientDetailSerializer(PatientListSerializer):
+    routes = RouteListSerializer(many=True, read_only=True)
+
+    class Meta(PatientListSerializer.Meta):
+        fields = PatientListSerializer.Meta.fields + ["routes"]
