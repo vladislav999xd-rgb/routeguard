@@ -41,6 +41,55 @@ class PatientRegistryTests(TestCase):
         self.assertEqual(len(client.get("/api/patients/?search=P013").data["results"]), 1)
         self.assertEqual(len(client.get("/api/patients/?search=Жукова").data["results"]), 1)
 
+    def test_registry_supports_stable_server_sorting_and_operational_fields(self):
+        client = self.client_for()
+        alphabetical = client.get("/api/patients/?registry=1&page_size=50&sort=alpha")
+        names = [item["full_name"] for item in alphabetical.data["results"]]
+        self.assertEqual(names, sorted(names, key=str.casefold))
+        self.assertTrue(all("operational" in item for item in alphabetical.data["results"]))
+
+        by_deadline = client.get("/api/patients/?registry=1&page_size=50&sort=deadline")
+        deadlines = [item["operational"]["due_date"] for item in by_deadline.data["results"]]
+        present_deadlines = [value for value in deadlines if value is not None]
+        self.assertEqual(present_deadlines, sorted(present_deadlines))
+        self.assertEqual(deadlines, present_deadlines + [None] * deadlines.count(None))
+
+        by_priority = client.get("/api/patients/?registry=1&page_size=50&sort=priority")
+        scores = [item["operational"]["priority"]["score"] for item in by_priority.data["results"]]
+        self.assertEqual(scores, sorted(scores, reverse=True))
+
+    def test_registry_filters_and_dashboard_counts_are_patient_scoped(self):
+        client = self.client_for()
+        registry = client.get("/api/patients/?registry=1&page_size=50")
+        facets = registry.data["facets"]
+        for category in ("high", "medium", "low"):
+            filtered = client.get(f"/api/patients/?registry=1&page_size=50&priority={category}&sort=priority")
+            self.assertEqual(filtered.data["count"], facets["priorities"][category])
+            self.assertTrue(
+                all(item["operational"]["priority"]["category"] == category for item in filtered.data["results"])
+            )
+        completed = client.get("/api/patients/?registry=1&page_size=50&status=completed")
+        self.assertTrue(all(item["operational"]["status"] == "completed" for item in completed.data["results"]))
+        attention = client.get("/api/patients/?registry=1&page_size=50&status=attention")
+        self.assertTrue(all(item["operational"]["requires_attention"] for item in attention.data["results"]))
+
+        dashboard = client.get("/api/dashboard/")
+        self.assertEqual(dashboard.data["summary"]["patients"], 20)
+        self.assertEqual(dashboard.data["summary"]["priority_counts"], facets["priorities"])
+
+    def test_registry_rejects_unknown_or_unsafe_query_values(self):
+        client = self.client_for()
+        for query in (
+            "sort=random",
+            "status=unknown",
+            "priority=urgent",
+            "page=0",
+            "page_size=51",
+            "page=not-a-number",
+        ):
+            response = client.get(f"/api/patients/?registry=1&{query}")
+            self.assertEqual(response.status_code, 400, query)
+
     def test_registration_generates_code_and_rejects_duplicate_identity(self):
         client = self.client_for()
         response = client.post(
@@ -72,6 +121,9 @@ class PatientRegistryTests(TestCase):
         detail = client.get(f"/api/patients/{patient.id}/")
         self.assertEqual(detail.status_code, 200)
         self.assertEqual(len(detail.data["routes"]), 2)
+        registry = client.get("/api/patients/?registry=1&search=P005")
+        self.assertEqual(registry.data["count"], 1)
+        self.assertEqual(registry.data["results"][0]["routes_count"], 2)
         duplicate = client.post(
             f"/api/patients/{patient.id}/routes/",
             {"plan_id": "follow-up-consultation"},

@@ -9,10 +9,11 @@ test('landing, demo dashboard and call assistant', async ({ page }, testInfo) =>
   if ((testInfo.project.use.viewport?.width ?? 1440) < 900) {
     await page.getByRole('button', { name: 'Открыть меню' }).click()
   }
-  await page.getByRole('link', { name: 'Пациенты', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Пациенты' })).toBeVisible()
-  await page.getByPlaceholder('Введите ФИО или код, например P001').fill('P001')
-  await page.getByRole('link', { name: 'Открыть карточку' }).click()
+  await page.getByRole('link', { name: 'Все пациенты', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Все пациенты' })).toBeVisible()
+  await page.getByPlaceholder('ФИО или код пациента').fill('P001')
+  await expect(page.getByText('1 пациентов')).toBeVisible()
+  await page.getByRole('link', { name: 'Открыть', exact: true }).first().click()
   await expect(page.getByRole('heading', { name: 'Галина Степановна Жукова' })).toBeVisible()
   await expect(page.getByText('Помощник координатора')).toBeVisible()
   await expect(page.getByText('Неявка', { exact: true }).first()).toBeVisible()

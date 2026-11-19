@@ -176,7 +176,14 @@ def create_approved_demo_route(workspace: Workspace, patient_id: int, plan_id: s
 
 def priority_info(route: Route) -> dict:
     today = route.workspace.demo_date if route.workspace.kind == Workspace.Kind.DEMO else timezone.localdate()
-    open_task_today = route.tasks.filter(status=Task.Status.OPEN, due_at__date__lte=today).exists()
+    prefetched_tasks = getattr(route, "_prefetched_objects_cache", {}).get("tasks")
+    if prefetched_tasks is None:
+        open_task_today = route.tasks.filter(status=Task.Status.OPEN, due_at__date__lte=today).exists()
+    else:
+        open_task_today = any(
+            task.status == Task.Status.OPEN and timezone.localtime(task.due_at).date() <= today
+            for task in prefetched_tasks
+        )
     if route.status == Route.Status.COMPLETED:
         return {"score": 0, "level": "done", "label": "Завершён", "reason": "Все обязательные шаги выполнены"}
     if route.due_date < today or route.attention_reason == Route.Attention.OVERDUE:
@@ -190,6 +197,73 @@ def priority_info(route: Route) -> dict:
     if route.due_date <= today + timezone.timedelta(days=1) or route.attention_reason == Route.Attention.DUE_SOON:
         return {"score": 50, "level": "medium", "label": "Скоро", "reason": "Срок наступает сегодня или завтра"}
     return {"score": 20, "level": "normal", "label": "Планово", "reason": "Маршрут идёт по плану"}
+
+
+def patient_operational_info(patient: Patient) -> dict:
+    """Return a patient-level organisational summary without clinical inference."""
+    cached = getattr(patient, "_operational_info", None)
+    if cached is not None:
+        return cached
+
+    routes = list(patient.routes.all())
+    active_routes = [route for route in routes if route.status in {Route.Status.DRAFT, Route.Status.ACTIVE}]
+    ranked = sorted(
+        ((route, priority_info(route)) for route in active_routes),
+        key=lambda item: (-item[1]["score"], item[0].due_date, item[0].id),
+    )
+    selected_route = ranked[0][0] if ranked else (routes[-1] if routes else None)
+    selected_priority = ranked[0][1] if ranked else {"score": 0, "reason": "Нет незавершённых маршрутов"}
+    score = selected_priority["score"]
+    category = "high" if score >= 65 else "medium" if score >= 50 else "low" if score > 0 else "none"
+    priority_labels = {"high": "Высокий", "medium": "Средний", "low": "Низкий", "none": "Нет"}
+
+    unfinished_steps = [
+        step
+        for route in active_routes
+        for step in route.steps.all()
+        if step.required and step.status != RouteStep.Status.COMPLETED
+    ]
+    next_step = min(
+        unfinished_steps,
+        key=lambda step: (step.due_date, step.route_id, step.sequence, step.id),
+        default=None,
+    )
+
+    if active_routes:
+        status = Route.Status.ACTIVE if any(route.status == Route.Status.ACTIVE for route in active_routes) else Route.Status.DRAFT
+        status_label = dict(Route.Status.choices)[status]
+    elif any(route.status == Route.Status.COMPLETED for route in routes):
+        status, status_label = Route.Status.COMPLETED, dict(Route.Status.choices)[Route.Status.COMPLETED]
+    elif routes:
+        status, status_label = Route.Status.CANCELLED, dict(Route.Status.choices)[Route.Status.CANCELLED]
+    else:
+        status, status_label = "none", "Новый пациент"
+
+    result = {
+        "status": status,
+        "status_label": status_label,
+        "requires_attention": any(route.attention_reason for route in active_routes) or category == "high",
+        "route_id": selected_route.id if selected_route else None,
+        "next_step": (
+            {
+                "id": next_step.id,
+                "title": next_step.title,
+                "due_date": next_step.due_date,
+                "route_id": next_step.route_id,
+            }
+            if next_step
+            else None
+        ),
+        "due_date": next_step.due_date if next_step else None,
+        "priority": {
+            "category": category,
+            "label": priority_labels[category],
+            "score": score,
+            "reason": selected_priority["reason"],
+        },
+    }
+    patient._operational_info = result
+    return result
 
 
 def _finish_open_tasks(workspace: Workspace, route: Route, kind: str) -> int:

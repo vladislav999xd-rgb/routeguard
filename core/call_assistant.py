@@ -33,7 +33,7 @@ def build_call_assistant(route: Route) -> dict:
     )
     next_task = open_tasks[0] if open_tasks else None
 
-    opening = f"Здравствуйте, {first_name}. Меня зовут [имя], я координатор RouteGuard. Удобно ли сейчас говорить?"
+    opening = f"Здравствуйте, {first_name}. Меня зовут [имя], я координатор сервиса «МедМаршрут». Удобно ли сейчас говорить?"
     previous_contact_prompts = {
         ContactResult.Outcome.REACHED: "В прошлый раз контакт состоялся; верно ли я понимаю, что договорённости остаются актуальны?",
         ContactResult.Outcome.SLOT_AGREED: "Ранее мы согласовали время; всё ли остаётся в силе?",

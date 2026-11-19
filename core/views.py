@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
@@ -21,7 +21,7 @@ from .demo import create_demo_workspace
 from .exceptions import DomainError
 from .models import Appointment, Comment, ContactResult, Document, Employee, Membership, Patient, Route, RouteStep, ScheduleSlot, Study, Task, Workspace
 from .serializers import EmployeeSerializer, PatientDetailSerializer, PatientListSerializer, RouteDetailSerializer, RouteListSerializer, SlotSerializer, TaskSerializer
-from .services import add_document, assign_route, author_name, audit, book_slot, complete_step, confirm_route, create_approved_demo_route, ensure_follow_up_task, priority_info, public_demo_route_plans, register_patient, save_contact
+from .services import add_document, assign_route, author_name, audit, book_slot, complete_step, confirm_route, create_approved_demo_route, ensure_follow_up_task, patient_operational_info, priority_info, public_demo_route_plans, register_patient, save_contact
 from .workspace import cleanup_expired_demo_workspaces, get_workspace
 
 
@@ -126,23 +126,74 @@ def patients_view(request):
         return Response(PatientDetailSerializer(patient_queryset(workspace).get(pk=patient.id)).data, status=201)
     queryset = patient_queryset(workspace)
     search = request.query_params.get("search", "").strip()
+    if len(search) > 180:
+        raise DomainError("Поисковый запрос слишком длинный.")
     if search:
         queryset = queryset.filter(Q(full_name__icontains=search) | Q(code__icontains=search))
     elif request.query_params.get("featured") == "1":
         queryset = queryset.order_by("code", "id")
-    elif request.query_params.get("registry") == "1":
-        queryset = queryset.order_by("full_name", "id")
-    else:
+    elif request.query_params.get("registry") != "1":
         return Response({"results": [], "count": 0, "page": 1, "page_size": 10, "total_pages": 0})
 
     try:
-        page_size = min(max(int(request.query_params.get("page_size", 10)), 1), 50)
-        page_number = max(int(request.query_params.get("page", 1)), 1)
+        page_size = int(request.query_params.get("page_size", 10))
+        page_number = int(request.query_params.get("page", 1))
     except (TypeError, ValueError):
         raise DomainError("Параметры страницы должны быть целыми числами.")
+    if page_size < 1 or page_size > 50 or page_number < 1:
+        raise DomainError("Номер страницы должен быть положительным, размер страницы — от 1 до 50.")
     if request.query_params.get("featured") == "1":
         page_size = min(page_size, 3)
-    paginator = Paginator(queryset, page_size)
+
+    status_filter = request.query_params.get("status", "all")
+    priority_filter = request.query_params.get("priority", "all")
+    sort = request.query_params.get("sort", "alpha")
+    if status_filter not in {"all", "active", "attention", "completed"}:
+        raise DomainError("Неизвестный фильтр статуса.")
+    if priority_filter not in {"all", "high", "medium", "low"}:
+        raise DomainError("Неизвестный фильтр приоритета.")
+    if sort not in {"alpha", "deadline", "priority"}:
+        raise DomainError("Неизвестный порядок сортировки.")
+
+    patients = list(queryset)
+    for patient in patients:
+        patient_operational_info(patient)
+    status_facets = {
+        "active": sum(patient._operational_info["status"] in {Route.Status.DRAFT, Route.Status.ACTIVE} for patient in patients),
+        "attention": sum(patient._operational_info["requires_attention"] for patient in patients),
+        "completed": sum(patient._operational_info["status"] == Route.Status.COMPLETED for patient in patients),
+    }
+    priority_facets = {
+        category: sum(patient._operational_info["priority"]["category"] == category for patient in patients)
+        for category in ("high", "medium", "low")
+    }
+
+    if status_filter == "active":
+        patients = [patient for patient in patients if patient._operational_info["status"] in {Route.Status.DRAFT, Route.Status.ACTIVE}]
+    elif status_filter == "attention":
+        patients = [patient for patient in patients if patient._operational_info["requires_attention"]]
+    elif status_filter == "completed":
+        patients = [patient for patient in patients if patient._operational_info["status"] == Route.Status.COMPLETED]
+    if priority_filter != "all":
+        patients = [patient for patient in patients if patient._operational_info["priority"]["category"] == priority_filter]
+
+    name_key = lambda patient: (patient.full_name.casefold(), patient.code, patient.id)
+    if request.query_params.get("featured") == "1":
+        patients.sort(key=lambda patient: (patient.code, patient.id))
+    elif sort == "deadline":
+        patients.sort(
+            key=lambda patient: (
+                patient._operational_info["due_date"] is None,
+                patient._operational_info["due_date"] or date.max,
+                *name_key(patient),
+            )
+        )
+    elif sort == "priority":
+        patients.sort(key=lambda patient: (-patient._operational_info["priority"]["score"], *name_key(patient)))
+    else:
+        patients.sort(key=name_key)
+
+    paginator = Paginator(patients, page_size)
     page = paginator.get_page(page_number)
     return Response(
         {
@@ -151,6 +202,7 @@ def patients_view(request):
             "page": page.number,
             "page_size": page_size,
             "total_pages": paginator.num_pages if paginator.count else 0,
+            "facets": {"statuses": status_facets, "priorities": priority_facets},
         }
     )
 
@@ -229,7 +281,10 @@ def dashboard(request):
         **appointment_metrics,
         **task_metrics,
     }
-    return Response({"summary": {"total": len(routes), "active": len(active), "completed": status_counts.get("completed", 0), "attention": sum(1 for route in active if route.attention_reason), "overdue_steps": overdue_steps, "tasks_due": task_count, "calls_today": calls_today}, "status_counts": status_counts, "attention_counts": attention_counts, "priority_routes": RouteListSerializer(prioritized, many=True).data, "analytics": analytics})
+    patients = list(patient_queryset(workspace))
+    patient_priorities = [patient_operational_info(patient)["priority"]["category"] for patient in patients]
+    priority_counts = {category: patient_priorities.count(category) for category in ("high", "medium", "low")}
+    return Response({"summary": {"total": len(routes), "patients": len(patients), "active": len(active), "completed": status_counts.get("completed", 0), "attention": sum(1 for route in active if route.attention_reason), "overdue_steps": overdue_steps, "tasks_due": task_count, "calls_today": calls_today, "priority_counts": priority_counts}, "status_counts": status_counts, "attention_counts": attention_counts, "priority_routes": RouteListSerializer(prioritized, many=True).data, "analytics": analytics})
 
 
 @api_view(["GET", "POST"])

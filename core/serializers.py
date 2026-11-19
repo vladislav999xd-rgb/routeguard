@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from .ai_assistant import build_coordinator_assistant
 from .models import Appointment, AuditEvent, Comment, ContactResult, Document, Employee, Patient, Route, RouteStep, ScheduleSlot, Task
-from .services import priority_info
+from .services import patient_operational_info, priority_info
 
 
 class EmployeeSerializer(serializers.ModelSerializer):
@@ -133,10 +133,11 @@ class RouteDetailSerializer(RouteListSerializer):
 class PatientListSerializer(serializers.ModelSerializer):
     routes_count = serializers.SerializerMethodField()
     current_route = serializers.SerializerMethodField()
+    operational = serializers.SerializerMethodField()
 
     class Meta:
         model = Patient
-        fields = ["id", "code", "full_name", "birth_date", "routes_count", "current_route"]
+        fields = ["id", "code", "full_name", "birth_date", "routes_count", "current_route", "operational"]
 
     def get_routes_count(self, obj):
         return len(obj.routes.all())
@@ -146,6 +147,9 @@ class PatientListSerializer(serializers.ModelSerializer):
         active = [route for route in routes if route.status in {Route.Status.DRAFT, Route.Status.ACTIVE}]
         selected = sorted(active, key=lambda route: (-priority_info(route)["score"], route.due_date, route.id))[0] if active else (routes[-1] if routes else None)
         return RouteListSerializer(selected).data if selected else None
+
+    def get_operational(self, obj):
+        return patient_operational_info(obj)
 
 
 class PatientDetailSerializer(PatientListSerializer):

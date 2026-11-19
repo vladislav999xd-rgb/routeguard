@@ -8,9 +8,9 @@ test('P001 public demo route can be contacted, rebooked and completed', async ({
   await expect(page.getByRole('heading', { name: 'Рабочий день' })).toBeVisible()
 
   await page.goto('/app/patients')
-  await page.getByPlaceholder('Введите ФИО или код, например P001').fill('P001')
-  await expect(page.getByText('Результаты поиска: 1')).toBeVisible()
-  await page.getByRole('link', { name: 'Открыть карточку' }).first().click()
+  await page.getByPlaceholder('ФИО или код пациента').fill('P001')
+  await expect(page.getByText('1 пациентов')).toBeVisible()
+  await page.getByRole('link', { name: 'Открыть', exact: true }).first().click()
   await expect(page.getByRole('heading', { name: 'Галина Степановна Жукова' })).toBeVisible()
   await expect(page.getByText('Неявка', { exact: true }).first()).toBeVisible()
   const assistant = page.locator('.detail-side .sticky')

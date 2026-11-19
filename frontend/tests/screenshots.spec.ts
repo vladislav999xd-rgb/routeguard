@@ -3,19 +3,19 @@ import path from 'node:path'
 
 test('capture the real patient-first interface', async ({ page }, testInfo) => {
   test.skip(process.env.ROUTEGUARD_SCREENSHOTS !== '1' || testInfo.project.name !== 'desktop', 'Run explicitly for release screenshots.')
-  const shot = (name: string) => path.resolve('..', 'screenshots', `routeguard-${name}.png`)
+  const shot = (name: string) => path.resolve('..', 'screenshots', `medmarshrut-${name}.png`)
 
   await page.goto('/')
   await page.getByRole('button', { name: /Открыть демо/ }).first().click()
   await expect(page.getByRole('heading', { name: 'Рабочий день' })).toBeVisible()
   await page.screenshot({ path: shot('overview'), fullPage: false })
 
-  await page.getByRole('link', { name: 'Пациенты', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Пациенты' })).toBeVisible()
-  await expect(page.locator('.patient-example-card').first()).toBeVisible()
+  await page.getByRole('link', { name: 'Все пациенты', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Все пациенты' })).toBeVisible()
+  await expect(page.locator('.patient-registry-row').first()).toBeVisible()
   await page.screenshot({ path: shot('patients'), fullPage: false })
 
-  await page.getByRole('link', { name: /Добавить пациента/ }).click()
+  await page.getByRole('link', { name: /Зарегистрировать пациента/ }).click()
   await expect(page.getByRole('heading', { name: 'Новый пациент' })).toBeVisible()
   await page.screenshot({ path: shot('registration'), fullPage: false })
   await page.getByLabel('ФИО').fill('Алиса Сергеевна Скриншотова')

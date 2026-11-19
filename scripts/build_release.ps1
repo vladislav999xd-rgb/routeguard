@@ -55,7 +55,7 @@ foreach ($directory in @("core", "routeguard", "backend_static")) {
 }
 $releaseScreenshots = Join-Path $appRoot "screenshots"
 New-Item -ItemType Directory -Path $releaseScreenshots -Force | Out-Null
-foreach ($screenshotPattern in @("graphite-sage-*.png", "routeguard-*.png")) {
+foreach ($screenshotPattern in @("graphite-sage-*.png", "routeguard-*.png", "medmarshrut-*.png")) {
     Get-ChildItem -LiteralPath (Join-Path $projectRoot "screenshots") -Filter $screenshotPattern -File | Copy-Item -Destination $releaseScreenshots -Force
 }
 foreach ($file in @("manage.py", "requirements.txt", "requirements-dev.txt", "README.md", "THIRD_PARTY_NOTICES.md")) {

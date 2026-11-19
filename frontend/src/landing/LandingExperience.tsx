@@ -30,8 +30,8 @@ function Mark() {
 }
 
 function StoryBrand() {
-  return <a className="story-brand" href="#top" aria-label="RouteGuard — на начало страницы">
-    <Mark /><span><strong>RouteGuard</strong><small>координация маршрутов</small></span>
+  return <a className="story-brand" href="#top" aria-label="МедМаршрут — на начало страницы">
+    <Mark /><span><strong>МедМаршрут</strong><small>координация маршрутов</small></span>
   </a>
 }
 
@@ -100,7 +100,7 @@ export default function LandingExperience({ busy, error, hasWorkspace, onOpenDem
         <div className="concept-hero-copy">
           <span className="story-kicker">Рабочее пространство координатора</span>
           <h1 id="story-title">Довести маршрут пациента до фактического выполнения</h1>
-          <p>RouteGuard помогает администратору клиники быстро понять, что должно произойти дальше: связаться с пациентом, подобрать время, получить подтверждение или закрыть выполненный этап.</p>
+          <p>МедМаршрут помогает администратору клиники быстро понять, что должно произойти дальше: связаться с пациентом, подобрать время, получить подтверждение или закрыть выполненный этап.</p>
           <div className="story-actions">
             <DemoButton busy={busy} hasWorkspace={hasWorkspace} onClick={onOpenDemo} />
             <a className="story-button story-button-quiet" href="#workflow">Как устроен процесс</a>
@@ -116,7 +116,7 @@ export default function LandingExperience({ busy, error, hasWorkspace, onOpenDem
 
       <section className="concept-purpose" id="purpose" aria-labelledby="purpose-title">
         <div className="concept-section-head">
-          <span className="story-kicker">Зачем нужен RouteGuard</span>
+          <span className="story-kicker">Зачем нужен МедМаршрут</span>
           <h2 id="purpose-title">Чтобы организационные шаги не терялись между назначением и визитом</h2>
           <p>Продукт объединяет разрозненные действия координатора в один понятный рабочий процесс.</p>
         </div>
@@ -144,7 +144,7 @@ export default function LandingExperience({ busy, error, hasWorkspace, onOpenDem
         <div>
           <span className="story-kicker">Честные границы продукта</span>
           <h2 id="boundaries-title">Организация процесса, а не медицинское решение</h2>
-          <p>RouteGuard хранит назначенные этапы и помогает координировать их выполнение. Диагнозы, назначения и клиническую срочность определяет медицинский специалист.</p>
+          <p>МедМаршрут хранит назначенные этапы и помогает координировать их выполнение. Диагнозы, назначения и клиническую срочность определяет медицинский специалист.</p>
         </div>
         <ul>
           <li><Check />Показывает следующий организационный шаг</li>
