@@ -9,7 +9,7 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from core.demo import create_demo_workspace
+from core.demo import create_demo_workspace, create_qa_demo_workspace
 from core.exceptions import DomainError
 from core.models import Appointment, Route, RouteStep, ScheduleSlot, Task, Workspace
 from core.services import add_document, book_slot, complete_step, save_contact
@@ -18,7 +18,7 @@ from core.services import add_document, book_slot, complete_step, save_contact
 class RouteGuardWorkflowTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.workspace = create_demo_workspace()
+        cls.workspace = create_qa_demo_workspace()
 
     def route(self, code):
         return Route.objects.select_related("patient").get(workspace=self.workspace, patient__code=code)
@@ -115,7 +115,7 @@ class RouteGuardWorkflowTests(TestCase):
                 self.assertIn("Login: routeguard_owner", credentials.read_text(encoding="utf-8"))
 
     def test_demo_workspaces_are_isolated(self):
-        other = create_demo_workspace()
+        other = create_qa_demo_workspace()
         route = self.route("P001")
         route.status = Route.Status.ACTIVE
         route.save(update_fields=["status"])
@@ -129,6 +129,18 @@ class RouteGuardWorkflowTests(TestCase):
         response = client.post("/api/demo/open/")
         self.assertEqual(response.status_code, 201)
         self.assertFalse(Workspace.objects.filter(pk=expired.pk).exists())
+        workspace_id = client.session["routeguard_workspace_id"]
+        workspace = Workspace.objects.get(pk=workspace_id)
+        self.assertEqual(workspace.patients.count(), 5)
+        routes = {route.patient.code: route for route in workspace.routes.select_related("patient")}
+        self.assertEqual(routes["P001"].attention_reason, Route.Attention.MISSED)
+        self.assertTrue(routes["P001"].steps.filter(appointments__status=Appointment.Status.MISSED).exists())
+        self.assertEqual(routes["P002"].status, Route.Status.DRAFT)
+        self.assertEqual(routes["P003"].status, Route.Status.ACTIVE)
+        self.assertTrue(routes["P003"].steps.filter(status=RouteStep.Status.PENDING).exists())
+        self.assertFalse(routes["P003"].steps.filter(appointments__status=Appointment.Status.SCHEDULED).exists())
+        self.assertTrue(routes["P004"].steps.filter(appointments__status=Appointment.Status.CANCELLED).exists())
+        self.assertEqual(routes["P005"].status, Route.Status.COMPLETED)
 
     def test_scheduled_slot_has_single_owner(self):
         route = self.route("P002")

@@ -2,15 +2,15 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from core.demo import create_demo_workspace
+from core.demo import create_demo_workspace, create_qa_demo_workspace
 from core.models import Document, Patient, Route
 
 
 class PatientRegistryTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.workspace = create_demo_workspace()
-        cls.other_workspace = create_demo_workspace()
+        cls.workspace = create_qa_demo_workspace()
+        cls.other_workspace = create_qa_demo_workspace()
 
     def client_for(self, workspace=None):
         client = APIClient()
@@ -23,10 +23,23 @@ class PatientRegistryTests(TestCase):
         client = self.client_for()
         response = client.get("/api/patients/")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data), 20)
-        self.assertEqual(len({item["id"] for item in response.data}), 20)
-        self.assertEqual(len(client.get("/api/patients/?search=P013").data), 1)
-        self.assertEqual(len(client.get("/api/patients/?search=Жукова").data), 1)
+        self.assertEqual(response.data["results"], [])
+        registry = client.get("/api/patients/?registry=1&page_size=7")
+        self.assertEqual(registry.data["count"], 20)
+        self.assertEqual(len(registry.data["results"]), 7)
+        self.assertEqual(len({item["id"] for item in registry.data["results"]}), 7)
+        second_page = client.get("/api/patients/?registry=1&page=2&page_size=7")
+        self.assertEqual(second_page.data["page"], 2)
+        self.assertEqual(second_page.data["total_pages"], 3)
+        self.assertFalse(
+            {item["id"] for item in registry.data["results"]}
+            & {item["id"] for item in second_page.data["results"]}
+        )
+        featured = client.get("/api/patients/?featured=1&page_size=50")
+        self.assertEqual(len(featured.data["results"]), 3)
+        self.assertEqual(featured.data["page_size"], 3)
+        self.assertEqual(len(client.get("/api/patients/?search=P013").data["results"]), 1)
+        self.assertEqual(len(client.get("/api/patients/?search=Жукова").data["results"]), 1)
 
     def test_registration_generates_code_and_rejects_duplicate_identity(self):
         client = self.client_for()

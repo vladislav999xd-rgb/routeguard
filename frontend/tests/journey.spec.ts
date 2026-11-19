@@ -11,9 +11,9 @@ test('landing, demo dashboard and call assistant', async ({ page }, testInfo) =>
   }
   await page.getByRole('link', { name: 'Пациенты', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Пациенты' })).toBeVisible()
-  await page.getByPlaceholder('ФИО или идентификатор пациента').fill('P016')
+  await page.getByPlaceholder('Введите ФИО или код, например P001').fill('P001')
   await page.getByRole('link', { name: 'Открыть карточку' }).click()
-  await expect(page.getByRole('heading', { name: 'Лариса Евгеньевна Попова' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Галина Степановна Жукова' })).toBeVisible()
   await expect(page.getByText('Помощник координатора')).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Согласование времени' })).toBeVisible()
+  await expect(page.getByText('Неявка', { exact: true }).first()).toBeVisible()
 })

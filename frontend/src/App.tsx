@@ -6,6 +6,7 @@ import {
   ReactNode,
   Suspense,
   useContext,
+  useDeferredValue,
   useEffect,
   useMemo,
   useState,
@@ -143,6 +144,8 @@ type RouteDetail = RouteRow & {
     contact_attempts: number
     last_contact: null | Pick<ContactResult, 'id' | 'outcome' | 'outcome_label' | 'note' | 'callback_at' | 'created_at'>
     next_task: null | Pick<Task, 'id' | 'kind' | 'title' | 'due_at'>
+    source: 'template' | 'provider_draft'
+    review_required: boolean
   }
 }
 type Patient = {
@@ -154,9 +157,10 @@ type Patient = {
   current_route: RouteRow | null
   routes?: RouteRow[]
 }
+type PatientPageResult = { results: Patient[]; count: number; page: number; page_size: number; total_pages: number }
 type RoutePlan = { id: string; title: string; description: string; steps: Array<{ title: string; due_in_days: number }> }
 type DashboardData = {
-  summary: { total: number; active: number; completed: number; attention: number; tasks_due: number; calls_today?: number }
+  summary: { total: number; active: number; completed: number; attention: number; overdue_steps: number; tasks_due: number; calls_today?: number }
   status_counts: Record<string, number>
   attention_counts: Record<string, number>
   priority_routes: RouteRow[]
@@ -226,14 +230,19 @@ function Empty({ text, detail = 'Здесь появятся данные пос
 function useLoad<T>(loader: () => Promise<T>, deps: unknown[] = []) {
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
   const [tick, setTick] = useState(0)
   useEffect(() => {
     let live = true
     setError('')
-    loader().then((value) => live && setData(value)).catch((reason: Error) => live && setError(reason.message))
+    setLoading(true)
+    loader()
+      .then((value) => live && setData(value))
+      .catch((reason: Error) => live && setError(reason.message))
+      .finally(() => live && setLoading(false))
     return () => { live = false }
   }, [...deps, tick])
-  return { data, error, reload: () => setTick((value) => value + 1) }
+  return { data, error, loading, reload: () => setTick((value) => value + 1) }
 }
 
 function Landing() {
@@ -278,7 +287,7 @@ function LegacyLanding() {
   return <main className="landing">
     <nav className="landing-nav"><Brand /><div><a href="#capabilities">Возможности</a><a href="#workflow">Как работает</a><a href="/app" className="button ghost">Войти</a></div></nav>
     <section className="hero">
-      <div className="hero-copy"><span className="eyebrow">Координация маршрутов пациентов</span><h1>Следующий шаг всегда под контролем</h1><p>RouteGuard объединяет маршруты, записи, звонки и задачи координатора в спокойном рабочем интерфейсе. Без клинических решений — только прозрачная организация процесса.</p><div className="hero-actions"><button className="button primary large" onClick={openDemo} disabled={busy}>{busy ? 'Готовим демо…' : session?.workspace ? 'Продолжить демо' : 'Открыть демо'}<ArrowRight size={18} /></button><a className="button secondary large" href="#workflow">Посмотреть процесс</a></div>{error && <p className="inline-error">{error}</p>}<div className="trust"><span><ShieldCheck />Изолированные демоданные</span><span><Check />20 сценариев</span><span><Activity />Объяснимый приоритет</span></div></div>
+      <div className="hero-copy"><span className="eyebrow">Координация маршрутов пациентов</span><h1>Следующий шаг всегда под контролем</h1><p>RouteGuard объединяет маршруты, записи, звонки и задачи координатора в спокойном рабочем интерфейсе. Без клинических решений — только прозрачная организация процесса.</p><div className="hero-actions"><button className="button primary large" onClick={openDemo} disabled={busy}>{busy ? 'Готовим демо…' : session?.workspace ? 'Продолжить демо' : 'Открыть демо'}<ArrowRight size={18} /></button><a className="button secondary large" href="#workflow">Посмотреть процесс</a></div>{error && <p className="inline-error">{error}</p>}<div className="trust"><span><ShieldCheck />Изолированные демоданные</span><span><Check />5 понятных сценариев</span><span><Activity />Объяснимый приоритет</span></div></div>
       <ProductPreview />
     </section>
     <section className="landing-section" id="capabilities"><span className="section-kicker">Рабочий контур</span><h2>Всё необходимое координатору — без визуального шума</h2><div className="features"><div><PhoneCall /><h3>Помощник звонка</h3><p>Готовый организационный сценарий, фиксация результата и задача перезвона.</p></div><div><ListTodo /><h3>Очередь действий</h3><p>Сроки, отмены, неявки и документы собраны в понятном приоритете.</p></div><div><CalendarDays /><h3>Безопасная запись</h3><p>Система проверяет слот и параллельные изменения перед сохранением.</p></div></div></section>
@@ -289,7 +298,7 @@ function LegacyLanding() {
 
 function ProductPreview() {
   const people = ['Анна Лебедева', 'Марина Соколова', 'Ольга Белова']
-  return <div className="product-preview" aria-label="Пример рабочего интерфейса"><div className="preview-sidebar"><Brand /><span className="active"><LayoutDashboard />Обзор</span><span><RouteIcon />Маршруты</span><span><ListTodo />Задачи</span></div><div className="preview-work"><div className="preview-search"><Search />Поиск по пациентам</div><h3>Рабочий день</h3><div className="preview-metrics"><b>20<small>в работе</small></b><b>5<small>требуют внимания</small></b><b>3<small>звонка сегодня</small></b></div>{people.map((person, index) => <div className={index === 0 ? 'preview-row selected' : 'preview-row'} key={person}><span className="avatar">{initials(person)}</span><b>{person}<small>P00{index + 1}</small></b><span>{index === 0 ? 'Повторная запись' : 'Подтвердить визит'}</span><time>{index === 2 ? '12 октября' : 'Сегодня'}</time></div>)}</div></div>
+  return <div className="product-preview" aria-label="Пример рабочего интерфейса"><div className="preview-sidebar"><Brand /><span className="active"><LayoutDashboard />Обзор</span><span><RouteIcon />Маршруты</span><span><ListTodo />Задачи</span></div><div className="preview-work"><div className="preview-search"><Search />Поиск по пациентам</div><h3>Рабочий день</h3><div className="preview-metrics"><b>5<small>сценариев</small></b><b>2<small>требуют внимания</small></b><b>1<small>звонок сегодня</small></b></div>{people.map((person, index) => <div className={index === 0 ? 'preview-row selected' : 'preview-row'} key={person}><span className="avatar">{initials(person)}</span><b>{person}<small>P00{index + 1}</small></b><span>{index === 0 ? 'Повторная запись' : 'Подтвердить визит'}</span><time>{index === 2 ? '12 октября' : 'Сегодня'}</time></div>)}</div></div>
 }
 
 const mainNav = [
@@ -315,7 +324,7 @@ function AppShell({ children }: { children: ReactNode }) {
   const userName = session?.user?.name ?? 'Гость демо'
   return <div className="shell">
     <aside className={open ? 'sidebar open' : 'sidebar'}>
-      <div className="sidebar-top"><Brand subtitle={session?.workspace?.kind === 'demo' ? 'ДЕМО · 20 пациентов' : session?.workspace?.name} /><button className="icon-button close-menu" onClick={() => setOpen(false)} aria-label="Закрыть меню"><X /></button></div>
+      <div className="sidebar-top"><Brand subtitle={session?.workspace?.kind === 'demo' ? 'ДЕМО · 5 пациентов' : session?.workspace?.name} /><button className="icon-button close-menu" onClick={() => setOpen(false)} aria-label="Закрыть меню"><X /></button></div>
       <nav className="primary-nav">{mainNav.map(([url, label, Icon]) => <NavLink key={url} to={url} end={url === '/app'} onClick={() => setOpen(false)}><Icon />{label}</NavLink>)}</nav>
       <nav className="secondary-nav"><button onClick={logout}><LogOut />Выйти</button></nav>
     </aside>
@@ -356,7 +365,7 @@ function Dashboard() {
   return <div className="workbench">
     <div className="workspace-main">
       <PageHead title="Рабочий день" date={today} />
-      <MetricsStrip active={data.dashboard.summary.active} attention={data.dashboard.summary.attention} calls={data.dashboard.summary.calls_today ?? 0} />
+      <MetricsStrip active={data.dashboard.summary.active} attention={data.dashboard.summary.attention} overdue={data.dashboard.summary.overdue_steps} completed={data.dashboard.summary.completed} />
       <QueueTabs active={filter} counts={counts} onChange={setFilter} />
       <section className="queue-surface">{rows.length ? <RouteTable rows={rows} /> : <Empty text="В этой группе маршрутов нет" />}</section>
     </div>
@@ -367,8 +376,8 @@ function PageHead({ title, text, eyebrow, date, action }: { title: string; text?
   return <div className="page-head"><div>{eyebrow && <span className="section-kicker">{eyebrow}</span>}<div className="title-line"><h1>{title}</h1>{date && <span className="head-date"><CalendarDays />{formatDate(date)}</span>}</div>{text && <p>{text}</p>}</div>{action}</div>
 }
 
-function MetricsStrip({ active, attention, calls }: { active: number; attention: number; calls: number }) {
-  return <div className="metrics-strip"><div><RouteIcon /><strong>{active}</strong><span><b>маршрутов</b><small>в работе</small></span></div><div className="attention-metric"><TriangleAlert /><strong>{attention}</strong><span><b>требуют внимания</b><small>есть организационные риски</small></span></div><div><Phone /><strong>{calls}</strong><span><b>звонков сегодня</b><small>запланировано</small></span></div></div>
+function MetricsStrip({ active, attention, overdue, completed }: { active: number; attention: number; overdue: number; completed: number }) {
+  return <div className="metrics-strip"><div><RouteIcon /><strong>{active}</strong><span><b>активные маршруты</b><small>сейчас в работе</small></span></div><div className="attention-metric"><TriangleAlert /><strong>{attention}</strong><span><b>требуют внимания</b><small>организационные риски</small></span></div><div className={overdue ? 'attention-metric' : ''}><Clock3 /><strong>{overdue}</strong><span><b>просроченные этапы</b><small>нужно действие</small></span></div><div><Check /><strong>{completed}</strong><span><b>завершённые маршруты</b><small>по фактическим данным</small></span></div></div>
 }
 
 function QueueTabs({ active, counts, onChange }: { active: QueueFilter; counts: Record<QueueFilter, number>; onChange: (filter: QueueFilter) => void }) {
@@ -426,15 +435,27 @@ function DrawerNotes({ route }: { route: RouteDetail }) {
 function PatientsPage() {
   const [params] = useSearchParams()
   const [search, setSearch] = useState(params.get('search') ?? '')
-  const { data, error, reload } = useLoad<Patient[]>(() => api(`/patients/?search=${encodeURIComponent(search)}`), [search])
-  useEffect(() => setSearch(params.get('search') ?? ''), [params])
+  const deferredSearch = useDeferredValue(search.trim())
+  const [showRegistry, setShowRegistry] = useState(false)
+  const [page, setPage] = useState(1)
+  const query = deferredSearch
+    ? `search=${encodeURIComponent(deferredSearch)}`
+    : showRegistry ? 'registry=1' : 'featured=1'
+  const { data, error, loading, reload } = useLoad<PatientPageResult>(() => api(`/patients/?${query}&page=${page}&page_size=10`), [query, page])
+  useEffect(() => { setSearch(params.get('search') ?? ''); setPage(1) }, [params])
+  useEffect(() => setPage(1), [deferredSearch, showRegistry])
+  const initial = !deferredSearch && !showRegistry
   return <>
-    <PageHead eyebrow="Реестр" title="Пациенты" text="Один пациент — одна карточка со всеми маршрутами и действиями." action={<NavLink className="button primary" to="/app/patients/new"><UserPlus />Добавить пациента</NavLink>} />
-    <div className="patient-registry-search"><label className="search field-search"><Search /><span className="sr-only">Поиск пациента</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ФИО или идентификатор пациента" /></label></div>
-    <section className="patient-registry" aria-label="Реестр пациентов">
-      {error ? <ErrorState error={error} retry={reload} /> : !data ? <Loading /> : data.length ? data.map((patient) => <PatientRegistryRow key={patient.id} patient={patient} />) : <Empty text="Пациенты не найдены" detail="Измените запрос или зарегистрируйте нового пациента." />}
-    </section>
+    <PageHead eyebrow="Поиск и регистрация" title="Пациенты" text="Найдите пациента по ФИО или внутреннему коду, затем откройте его карточку." action={<NavLink className="button primary" to="/app/patients/new"><UserPlus />Добавить пациента</NavLink>} />
+    <div className="patient-registry-search"><label className="search field-search"><Search /><span className="sr-only">Поиск пациента</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Введите ФИО или код, например P001" autoFocus /></label></div>
+    {initial && <section className="patient-search-start"><div><span className="section-kicker">Быстрый старт</span><h2>Начните с поиска пациента</h2><p>В публичном демо пять синтетических сценариев. Ниже — три примера, полный реестр открывается отдельно.</p><button className="button secondary" onClick={() => setShowRegistry(true)}>Открыть весь реестр</button></div><div className="patient-featured-grid">{error ? <ErrorState error={error} retry={reload} /> : loading || !data ? <Loading rows={3} /> : data.results.map((patient) => <PatientExampleCard patient={patient} key={patient.id} />)}</div></section>}
+    {!initial && <><div className="registry-result-head"><div><b>{loading ? 'Ищем…' : deferredSearch ? `Результаты поиска: ${data?.count ?? 0}` : `Реестр: ${data?.count ?? 0}`}</b><span>{deferredSearch ? `Запрос «${deferredSearch}»` : 'Пациенты текущего рабочего пространства'}</span></div>{showRegistry && !deferredSearch && <button className="text-button" onClick={() => setShowRegistry(false)}>Скрыть реестр</button>}</div><section className="patient-registry" aria-label="Реестр пациентов">{error ? <ErrorState error={error} retry={reload} /> : loading || !data ? <Loading /> : data.results.length ? data.results.map((patient) => <PatientRegistryRow key={patient.id} patient={patient} />) : <Empty text="Пациенты не найдены" detail="Измените запрос или зарегистрируйте нового пациента." />}</section>{!loading && data && data.total_pages > 1 && <div className="registry-pagination"><button className="button secondary" disabled={data.page <= 1} onClick={() => setPage((value) => value - 1)}>Предыдущая страница</button><span>Страница {data.page} из {data.total_pages}</span><button className="button secondary" disabled={data.page >= data.total_pages} onClick={() => setPage((value) => value + 1)}>Следующая страница</button></div>}</>}
   </>
+}
+
+function PatientExampleCard({ patient }: { patient: Patient }) {
+  const route = patient.current_route
+  return <NavLink className="patient-example-card" to={`/app/patients/${patient.id}${route ? `?route=${route.id}` : ''}`}><span className="avatar patient-avatar">{initials(patient.full_name)}</span><span><b>{patient.full_name}</b><small>{patient.code} · {route?.attention_label || route?.status_label || 'Новый пациент'}</small><strong>{route?.next_step?.title ?? 'Открыть карточку'}</strong></span></NavLink>
 }
 
 function PatientRegistryRow({ patient }: { patient: Patient }) {
@@ -491,7 +512,7 @@ function PatientPage() {
     <NavLink to="/app/patients" className="back"><ArrowLeft />Все пациенты</NavLink>
     <header className="patient-page-head">
       <div className="patient-page-person"><span className="avatar patient-large">{initials(patient.full_name)}</span><div><span>{patient.code} · {ageFromBirthDate(patient.birth_date)} лет</span><h1>{patient.full_name}</h1><p>Дата рождения: {formatDate(patient.birth_date)}</p></div></div>
-      {patient.current_route ? <div className="patient-page-summary"><span className={`registry-status ${patient.current_route.status}`}>{patient.current_route.status_label}</span><div><small>Ближайший срок</small><strong>{formatDate(patient.current_route.due_date)}</strong></div><div><small>Главное действие</small><strong>{patient.current_route.next_step?.title ?? 'Маршрут завершён'}</strong></div></div> : <span className="registry-status none">Маршрут не создан</span>}
+      {patient.current_route ? <div className="patient-page-summary"><span className={`registry-status ${patient.current_route.status}`}>{patient.current_route.status_label}</span><div><small>Ответственный</small><strong>{patient.current_route.assignee_name ?? 'Не назначен'}</strong></div><div><small>Ближайший срок</small><strong>{formatDate(patient.current_route.due_date)}</strong></div><div><small>Главное действие</small><strong>{patient.current_route.next_step?.title ?? 'Маршрут завершён'}</strong></div></div> : <span className="registry-status none">Маршрут не создан</span>}
     </header>
     <div className="patient-route-switcher">
       <div>{routes.map((route) => <button className={route.id === selectedRouteId ? 'active' : ''} onClick={() => selectRoute(route.id)} key={route.id}><span>{route.study_type}</span><small>{route.status_label} · {formatDate(route.due_date)}</small></button>)}</div>
@@ -535,16 +556,22 @@ function PatientRouteWorkspace({ routeId, onPatientReload }: { routeId: number; 
     {message && <div className={message.includes('Не ') || message.includes('нельзя') ? 'notice error-notice' : 'notice'}>{message}</div>}
     <div className="detail-grid patient-workspace-grid"><div className="detail-main">
       <section className="panel"><PanelHead title="Маршрут пациента" />{route.status === 'draft' && <button disabled={busy} className="button primary" onClick={() => act(() => post(`/routes/${route.id}/confirm/`), 'Маршрут подтверждён')}>Подтвердить маршрут</button>}<div className="timeline">{route.steps.map((step, index) => <StepCard key={step.id} step={step} index={index} routeStatus={route.status} isCurrent={index === currentStepIndex} onDone={() => act(() => post(`/steps/${step.id}/complete/`), 'Шаг выполнен')} onDocument={() => act(() => post(`/steps/${step.id}/documents/`, { label: 'Синтетическое подтверждение' }), 'Подтверждение добавлено')} onBook={() => { reload(); onPatientReload() }} />)}</div></section>
-      <DocumentsPanel route={route} onSaved={reload} />
-      <section className="panel"><PanelHead title="Заключение специалиста" /><div className="clinical-note"><ShieldCheck /><p>{route.conclusion}</p></div><small className="muted">Синтетические данные. RouteGuard не интерпретирует заключение и не формирует назначения.</small></section>
-      <ContactHistory contacts={route.contacts} />
-      <section className="panel"><PanelHead title="История действий" /><div className="history">{route.events.map((event) => <div key={event.id}><i /><div><b>{event.message}</b><span>{event.author} · {formatDate(event.occurred_at, true)}</span></div></div>)}</div></section>
+      <div className="patient-secondary-sections">
+        <CollapsibleCard label="Документы" meta={`${route.steps.reduce((total, step) => total + step.documents.length, 0)} файлов`}><DocumentsPanel route={route} onSaved={reload} /></CollapsibleCard>
+        <CollapsibleCard label="Заключение специалиста" meta="Синтетические данные"><section className="panel"><PanelHead title="Заключение специалиста" /><div className="clinical-note"><ShieldCheck /><p>{route.conclusion}</p></div><small className="muted">RouteGuard не интерпретирует заключение и не формирует назначения.</small></section></CollapsibleCard>
+        <CollapsibleCard label="Контакты" meta={`${route.contacts.length} записей`}><ContactHistory contacts={route.contacts} /></CollapsibleCard>
+        <CollapsibleCard label="История действий" meta={`${route.events.length} событий`}><section className="panel"><PanelHead title="История действий" /><div className="history">{route.events.map((event) => <div key={event.id}><i /><div><b>{event.message}</b><span>{event.author} · {formatDate(event.occurred_at, true)}</span></div></div>)}</div></section></CollapsibleCard>
+      </div>
     </div><aside className="detail-side">
-      <section className="panel sticky"><div className="assistant-title"><span><PhoneCall /></span><div><small>Помощник координатора</small><h2>{route.call_assistant.scenario}</h2></div></div><p><b>Причина контакта:</b> {route.call_assistant.goal}</p>{route.call_assistant.next_task && <div className="assistant-next-task"><Clock3 /><span><small>Следующая задача</small><b>{route.call_assistant.next_task.title}</b><time>{formatDate(route.call_assistant.next_task.due_at, true)}</time></span></div>}<div className="script"><small>Начало разговора</small><p>{route.call_assistant.opening}</p><small>Уточнить</small><ul>{route.call_assistant.questions.map((question) => <li key={question}>{question}</li>)}</ul><small>Предложение</small><p>{route.call_assistant.offer}</p></div><CallResult routeId={route.id} onSaved={reload} /><p className="disclaimer">{route.call_assistant.disclaimer}</p></section>
+      <section className="panel sticky"><div className="assistant-title"><span><PhoneCall /></span><div><small>Помощник координатора</small><h2>{route.call_assistant.scenario}</h2></div></div><span className={`assistant-source ${route.call_assistant.source}`}>{route.call_assistant.review_required ? 'Черновик ИИ · требуется проверка' : 'Проверенный шаблонный сценарий'}</span><p><b>Причина контакта:</b> {route.call_assistant.goal}</p>{route.call_assistant.next_task && <div className="assistant-next-task"><Clock3 /><span><small>Следующая задача</small><b>{route.call_assistant.next_task.title}</b><time>{formatDate(route.call_assistant.next_task.due_at, true)}</time></span></div>}<div className="script"><small>Начало разговора</small><p>{route.call_assistant.opening}</p><small>Уточнить</small><ul>{route.call_assistant.questions.map((question) => <li key={question}>{question}</li>)}</ul><small>Предложение</small><p>{route.call_assistant.offer}</p></div><CallResult routeId={route.id} onSaved={reload} /><p className="disclaimer">{route.call_assistant.disclaimer}</p></section>
       <section className="panel"><h2>Ответственный</h2><select value={route.assignee ?? ''} onChange={(event) => act(() => post(`/routes/${route.id}/assign/`, { employee_id: Number(event.target.value) }), 'Ответственный назначен')}><option value="">Не назначен</option>{employees?.map((employee) => <option key={employee.id} value={employee.id}>{employee.full_name}</option>)}</select></section>
-      <section className="panel"><PanelHead title="Комментарий" /><CommentForm routeId={route.id} onSaved={reload} /></section>
+      <CollapsibleCard label="Добавить комментарий"><section className="panel"><PanelHead title="Комментарий" /><CommentForm routeId={route.id} onSaved={reload} /></section></CollapsibleCard>
     </aside></div>
   </>
+}
+
+function CollapsibleCard({ label, meta, children }: { label: string; meta?: string; children: ReactNode }) {
+  return <details className="panel collapsible-card"><summary><span><b>{label}</b>{meta && <small>{meta}</small>}</span><ChevronDown /></summary><div className="collapsible-content">{children}</div></details>
 }
 
 function DocumentsPanel({ route, onSaved }: { route: RouteDetail; onSaved: () => void }) {
@@ -689,12 +716,10 @@ function SchedulePage() {
   return <><PageHead eyebrow="Доступность" title="Расписание" text="Слоты специалистов и площадок. Прошедшее время при записи отклоняется сервером." /><div className="tabs"><button className={status === 'free' ? 'active' : ''} onClick={() => setStatus('free')}>Свободные</button><button className={status === 'busy' ? 'active' : ''} onClick={() => setStatus('busy')}>Занятые</button></div>{error ? <ErrorState error={error} retry={reload} /> : !data ? <Loading /> : <div className="schedule-grid">{Object.entries(grouped).slice(0, 12).map(([day, slots]) => <section className="panel day" key={day}><h2>{day}</h2>{slots.map((slot) => <div className="schedule-slot" key={slot.id}><time>{new Date(slot.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</time><div><b>{slot.service_name}</b><span>{slot.specialist_name}</span><small>{slot.facility_name}</small></div><span className={`availability ${slot.status}`}>{slot.status === 'free' ? 'Свободен' : 'Занят'}</span></div>)}</section>)}</div>}</>
 }
 
-const scenarioNotes = ['Черновик: требуется подтверждение', 'Активный маршрут: доступен слот', 'Будущая запись подтверждена', 'Приём назначен на демодату', 'Завершённый маршрут', 'Возврат после отмены пациентом', 'Неявка и задача координатору', 'Нет слота до срока', 'Просроченный шаг', 'Неполное заключение', 'Нет ответственного', 'Нет подтверждающего документа', 'Два шага: неявка и продолжение', 'Запрос на перенос', 'Защита от дубля', 'Согласование времени', 'Отмена клиникой', 'Альтернативная площадка', 'Два выполненных шага', 'Срок наступает завтра']
-
 function ScenariosPage() {
   const { data, error, reload } = useLoad<RouteRow[]>(() => api('/routes/'))
-  const byCode = new Map((data ?? []).map((route) => [route.patient_code, route.id]))
-  return <><PageHead eyebrow="Контур демонстрации" title="20 сценариев" text="Каждый сценарий имеет заданное состояние и ожидаемый результат." />{error ? <ErrorState error={error} retry={reload} /> : !data ? <Loading /> : <div className="scenario-grid">{scenarioNotes.map((note, index) => { const code = `P${String(index + 1).padStart(3, '0')}`; return <NavLink to={`/app/routes/${byCode.get(code)}`} className="scenario" key={note}><span>{code}</span><h3>{note}</h3><p>{index % 3 === 0 ? 'Покажите изменение статуса и запись в истории.' : index % 3 === 1 ? 'Проверьте приоритет и следующее действие.' : 'Пройдите сценарий из карточки маршрута.'}</p><b>Открыть<ArrowRight /></b></NavLink> })}</div>}</>
+  const scenarios = [...(data ?? [])].sort((left, right) => left.patient_code.localeCompare(right.patient_code, 'ru'))
+  return <><PageHead eyebrow="Контур QA" title={`${data?.length ?? '—'} сценариев`} text="Публичное демо содержит пять состояний. Полный набор P001–P020 создаётся отдельно командой seed_demo --full." />{error ? <ErrorState error={error} retry={reload} /> : !data ? <Loading /> : <div className="scenario-grid">{scenarios.map((route) => <NavLink to={`/app/routes/${route.id}`} className="scenario" key={route.id}><span>{route.patient_code}</span><h3>{route.attention_label || route.status_label}</h3><p>{route.next_step?.title ?? 'Маршрут завершён; доступна сохранённая история.'}</p><b>Открыть<ArrowRight /></b></NavLink>)}</div>}</>
 }
 
 function LoginForm({ onSuccess }: { onSuccess?: () => void }) {
@@ -726,7 +751,7 @@ function AccessScreen() {
   const openDemo = async () => {
     try { await post('/demo/open/'); await refresh() } catch (reason) { setError((reason as Error).message) }
   }
-  return <div className="access-screen"><header><Brand /></header><div className="access-card"><div className="access-copy"><span className="section-kicker">RouteGuard</span><h1>Откройте рабочее пространство</h1><p>Для знакомства используйте изолированное демо с двадцатью готовыми сценариями.</p><button className="button primary large" onClick={openDemo}>Открыть демо</button>{error && <p className="inline-error">{error}</p>}<button className="text-button" onClick={() => navigate('/')}>Вернуться на главную</button></div><div className="access-login"><h2>Вход сотрудника</h2><LoginForm /></div></div></div>
+  return <div className="access-screen"><header><Brand /></header><div className="access-card"><div className="access-copy"><span className="section-kicker">RouteGuard</span><h1>Откройте рабочее пространство</h1><p>Для знакомства используйте изолированное демо с пятью показательными сценариями.</p><button className="button primary large" onClick={openDemo}>Открыть демо</button>{error && <p className="inline-error">{error}</p>}<button className="text-button" onClick={() => navigate('/')}>Вернуться на главную</button></div><div className="access-login"><h2>Вход сотрудника</h2><LoginForm /></div></div></div>
 }
 
 function ProtectedApp() {

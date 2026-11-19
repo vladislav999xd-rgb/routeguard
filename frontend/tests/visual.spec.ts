@@ -8,6 +8,7 @@ test('graphite and sage workspace has no global horizontal overflow', async ({ p
   const menuButton = page.getByRole('button', { name: 'Открыть меню' })
   if (await menuButton.isVisible()) await menuButton.click()
   await page.getByRole('link', { name: 'Пациенты', exact: true }).click()
+  await page.getByPlaceholder('Введите ФИО или код, например P001').fill('P001')
   await page.getByRole('link', { name: 'Открыть карточку' }).first().click()
   await expect(page.locator('.patient-page-head')).toBeVisible()
 

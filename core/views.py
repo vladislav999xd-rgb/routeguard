@@ -6,6 +6,7 @@ from urllib.parse import quote
 
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
+from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Count, Prefetch, Q
 from django.http import FileResponse, Http404, HttpResponse
@@ -127,7 +128,31 @@ def patients_view(request):
     search = request.query_params.get("search", "").strip()
     if search:
         queryset = queryset.filter(Q(full_name__icontains=search) | Q(code__icontains=search))
-    return Response(PatientListSerializer(queryset.order_by("full_name", "id"), many=True).data)
+    elif request.query_params.get("featured") == "1":
+        queryset = queryset.order_by("code", "id")
+    elif request.query_params.get("registry") == "1":
+        queryset = queryset.order_by("full_name", "id")
+    else:
+        return Response({"results": [], "count": 0, "page": 1, "page_size": 10, "total_pages": 0})
+
+    try:
+        page_size = min(max(int(request.query_params.get("page_size", 10)), 1), 50)
+        page_number = max(int(request.query_params.get("page", 1)), 1)
+    except (TypeError, ValueError):
+        raise DomainError("Параметры страницы должны быть целыми числами.")
+    if request.query_params.get("featured") == "1":
+        page_size = min(page_size, 3)
+    paginator = Paginator(queryset, page_size)
+    page = paginator.get_page(page_number)
+    return Response(
+        {
+            "results": PatientListSerializer(page.object_list, many=True).data,
+            "count": paginator.count,
+            "page": page.number,
+            "page_size": page_size,
+            "total_pages": paginator.num_pages if paginator.count else 0,
+        }
+    )
 
 
 @api_view(["GET"])
@@ -190,6 +215,12 @@ def dashboard(request):
         kind=Task.Kind.CALLBACK,
         due_at__date=today,
     ).count()
+    overdue_steps = RouteStep.objects.filter(
+        workspace=workspace,
+        route__status__in=[Route.Status.DRAFT, Route.Status.ACTIVE],
+        status__in=[RouteStep.Status.PENDING, RouteStep.Status.SCHEDULED],
+        due_date__lt=today,
+    ).count()
     eligible_routes = route_metrics["eligible_routes"]
     analytics = {
         "as_of": today.isoformat(),
@@ -198,7 +229,7 @@ def dashboard(request):
         **appointment_metrics,
         **task_metrics,
     }
-    return Response({"summary": {"total": len(routes), "active": len(active), "completed": status_counts.get("completed", 0), "attention": sum(1 for route in active if route.attention_reason), "tasks_due": task_count, "calls_today": calls_today}, "status_counts": status_counts, "attention_counts": attention_counts, "priority_routes": RouteListSerializer(prioritized, many=True).data, "analytics": analytics})
+    return Response({"summary": {"total": len(routes), "active": len(active), "completed": status_counts.get("completed", 0), "attention": sum(1 for route in active if route.attention_reason), "overdue_steps": overdue_steps, "tasks_due": task_count, "calls_today": calls_today}, "status_counts": status_counts, "attention_counts": attention_counts, "priority_routes": RouteListSerializer(prioritized, many=True).data, "analytics": analytics})
 
 
 @api_view(["GET", "POST"])

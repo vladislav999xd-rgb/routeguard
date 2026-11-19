@@ -4,7 +4,7 @@ from django.db.models import Q
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from core.demo import create_demo_workspace
+from core.demo import create_qa_demo_workspace
 from core.exceptions import DomainError
 from core.models import Appointment, ContactResult, Route, RouteStep, ScheduleSlot, Task
 from core.services import book_slot, complete_step, save_contact
@@ -13,7 +13,7 @@ from core.services import book_slot, complete_step, save_contact
 class RouteGuardRegressionTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.workspace = create_demo_workspace()
+        cls.workspace = create_qa_demo_workspace()
 
     def route(self, code, *, workspace=None):
         return Route.objects.select_related("patient").get(
@@ -407,7 +407,7 @@ class RouteGuardRegressionTests(TestCase):
         )
 
     def test_foreign_workspace_appointment_mutation_is_rejected_without_changes(self):
-        foreign_workspace = create_demo_workspace()
+        foreign_workspace = create_qa_demo_workspace()
         foreign_route = self.route("P014", workspace=foreign_workspace)
         foreign_step = foreign_route.steps.get()
         appointment = foreign_step.appointments.get(status=Appointment.Status.SCHEDULED)
@@ -537,7 +537,7 @@ class RouteGuardRegressionTests(TestCase):
         self.assertIn(double_overdue.id, overdue_ids)
         self.assertEqual(analytics["overdue_routes"], len(overdue_ids))
 
-        foreign_workspace = create_demo_workspace()
+        foreign_workspace = create_qa_demo_workspace()
         foreign_route = self.route("P016", workspace=foreign_workspace)
         Task.objects.create(
             workspace=foreign_workspace,

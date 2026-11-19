@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-test('P013 missed step can be contacted, rebooked and completed', async ({ page }, testInfo) => {
+test('P001 public demo route can be contacted, rebooked and completed', async ({ page }, testInfo) => {
   test.skip(!['mobile', 'desktop'].includes(testInfo.project.name), 'The critical workflow is covered on mobile and desktop.')
 
   await page.goto('/')
@@ -8,8 +8,9 @@ test('P013 missed step can be contacted, rebooked and completed', async ({ page 
   await expect(page.getByRole('heading', { name: 'Рабочий день' })).toBeVisible()
 
   await page.goto('/app/patients')
-  await page.getByPlaceholder('ФИО или идентификатор пациента').fill('P013')
-  await page.getByRole('link', { name: 'Открыть карточку' }).click()
+  await page.getByPlaceholder('Введите ФИО или код, например P001').fill('P001')
+  await expect(page.getByText('Результаты поиска: 1')).toBeVisible()
+  await page.getByRole('link', { name: 'Открыть карточку' }).first().click()
   await expect(page.getByRole('heading', { name: 'Галина Степановна Жукова' })).toBeVisible()
   await expect(page.getByText('Неявка', { exact: true }).first()).toBeVisible()
   const assistant = page.locator('.detail-side .sticky')
@@ -17,10 +18,11 @@ test('P013 missed step can be contacted, rebooked and completed', async ({ page 
   const callback = new Date(Date.now() + 24 * 60 * 60 * 1000)
   const callbackLocal = new Date(callback.getTime() - callback.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
   await assistant.getByLabel('Когда перезвонить').fill(callbackLocal)
-  await assistant.getByLabel('Комментарий').fill('Согласована повторная связь по сценарию P013')
+  await assistant.getByLabel('Комментарий').fill('Согласована повторная связь по сценарию P001')
   await assistant.getByRole('button', { name: 'Сохранить результат' }).click()
   await expect(assistant.getByRole('status')).toHaveText('Результат сохранён')
-  await expect(page.getByText('Согласована повторная связь по сценарию P013')).toBeVisible()
+  await page.getByText('Контакты', { exact: true }).first().click()
+  await expect(page.getByText('Согласована повторная связь по сценарию P001')).toBeVisible()
 
   const currentStep = page.locator('.step').filter({ hasText: 'Контрольное исследование' })
   await currentStep.getByRole('button', { name: 'Выбрать слот' }).click()
@@ -29,5 +31,6 @@ test('P013 missed step can be contacted, rebooked and completed', async ({ page 
   await expect(currentStep.getByRole('status')).toHaveText('Запись подтверждена')
   await currentStep.getByRole('button', { name: 'Отметить выполненным' }).click()
   await expect(page.getByText('Шаг выполнен', { exact: true })).toBeVisible()
+  await page.getByText('История действий', { exact: true }).first().click()
   await expect(page.getByText('Все обязательные шаги выполнены, маршрут завершён')).toBeVisible()
 })

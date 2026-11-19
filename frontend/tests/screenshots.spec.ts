@@ -12,7 +12,7 @@ test('capture the real patient-first interface', async ({ page }, testInfo) => {
 
   await page.getByRole('link', { name: 'Пациенты', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Пациенты' })).toBeVisible()
-  await expect(page.locator('.patient-registry-row').first()).toBeVisible()
+  await expect(page.locator('.patient-example-card').first()).toBeVisible()
   await page.screenshot({ path: shot('patients'), fullPage: false })
 
   await page.getByRole('link', { name: /Добавить пациента/ }).click()
@@ -26,7 +26,8 @@ test('capture the real patient-first interface', async ({ page }, testInfo) => {
   await expect(page.getByRole('heading', { name: 'Маршрут пациента' })).toBeVisible()
   await page.screenshot({ path: shot('patient-card'), fullPage: false })
 
-  const documents = page.getByRole('heading', { name: 'Документы' }).locator('..').locator('..')
+  await page.getByText('Документы', { exact: true }).first().click()
+  const documents = page.locator('details.collapsible-card[open]').filter({ hasText: 'Документы' }).first()
   await documents.scrollIntoViewIfNeeded()
   await documents.screenshot({ path: shot('route-documents') })
   const assistant = page.locator('.detail-side .sticky')

@@ -9,6 +9,8 @@ test('patient-first flow covers registration, route, document, call, booking and
   await expect(page.getByRole('heading', { name: 'Рабочий день' })).toBeVisible()
   await page.goto('/app/patients')
   await expect(page.getByRole('heading', { name: 'Пациенты' })).toBeVisible()
+  await expect(page.locator('.patient-registry-row')).toHaveCount(0)
+  await expect(page.locator('.patient-example-card')).toHaveCount(3)
 
   await page.getByRole('link', { name: /Добавить пациента/ }).click()
   await expect(page.getByRole('heading', { name: 'Новый пациент' })).toBeVisible()
@@ -16,7 +18,7 @@ test('patient-first flow covers registration, route, document, call, booking and
   await page.getByLabel('Дата рождения').fill('1990-03-14')
   await page.getByRole('button', { name: 'Зарегистрировать пациента' }).click()
   await expect(page.getByRole('heading', { name: 'Алиса Сергеевна Тестова' })).toBeVisible()
-  await expect(page.getByText('P021', { exact: false }).first()).toBeVisible()
+  await expect(page.getByText('P006', { exact: false }).first()).toBeVisible()
 
   await page.getByRole('button', { name: 'Создать демо-маршрут' }).click()
   await expect(page.getByText('Контроль после исследования')).toBeVisible()
@@ -26,6 +28,7 @@ test('patient-first flow covers registration, route, document, call, booking and
   await expect(page.getByText('Контрольное исследование', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('Помощник координатора')).toBeVisible()
 
+  await page.getByText('Документы', { exact: true }).first().click()
   const fileInput = page.locator('.document-upload input[type="file"]')
   await page.getByLabel('Название').fill('Синтетический результат')
   await fileInput.setInputFiles({ name: 'synthetic-result.txt', mimeType: 'text/plain', buffer: Buffer.from('Synthetic RouteGuard document') })
@@ -63,9 +66,10 @@ test('patient-first flow covers registration, route, document, call, booking and
   await secondStep.getByRole('button', { name: 'Отметить выполненным' }).click()
   await expect(secondStep.getByRole('button', { name: 'Добавить подтверждение' })).toBeVisible()
   await secondStep.getByRole('button', { name: 'Добавить подтверждение' }).click()
-  await expect(page.getByText('Все обязательные шаги выполнены, маршрут завершён')).toBeVisible()
 
+  await page.getByText('История действий', { exact: true }).first().click()
   const history = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'История действий' }) })
+  await expect(history.getByText('Все обязательные шаги выполнены, маршрут завершён')).toBeVisible()
   await expect(history.getByText(/Создан синтетический маршрут/)).toBeVisible()
   await expect(history.getByText(/Результат звонка/)).toBeVisible()
   await expect(history.getByText(/Запись: Отменена/)).toBeVisible()

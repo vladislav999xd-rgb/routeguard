@@ -3,6 +3,8 @@ import { defineConfig } from '@playwright/test'
 export default defineConfig({
   testDir: './tests',
   timeout: 30_000,
+  // Local development uses SQLite, which serialises writes. Production concurrency is verified separately on PostgreSQL.
+  workers: 1,
   use: { baseURL: 'http://127.0.0.1:8010', channel: 'msedge', trace: 'retain-on-failure' },
   reporter: [['list']],
   projects: [

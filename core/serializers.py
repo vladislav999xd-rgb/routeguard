@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .call_assistant import build_call_assistant
+from .ai_assistant import build_coordinator_assistant
 from .models import Appointment, AuditEvent, Comment, ContactResult, Document, Employee, Patient, Route, RouteStep, ScheduleSlot, Task
 from .services import priority_info
 
@@ -127,7 +127,7 @@ class RouteDetailSerializer(RouteListSerializer):
         fields = RouteListSerializer.Meta.fields + ["conclusion", "study_date", "steps", "tasks", "events", "comments", "contacts", "call_assistant"]
 
     def get_call_assistant(self, obj):
-        return build_call_assistant(obj)
+        return build_coordinator_assistant(obj)
 
 
 class PatientListSerializer(serializers.ModelSerializer):

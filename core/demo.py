@@ -34,6 +34,19 @@ SCENARIOS = [
     dict(code="P020", name="Дарья Константиновна Романова", age=47, status="active", attention="due_soon", assignee="Мария Котова", due=1, step="Записать на консультацию", step_status="pending", history="Срок следующего шага наступает завтра.", comment="Записи пока нет, требуется внимание.", task=True),
 ]
 
+PUBLIC_SCENARIO_SOURCES = [
+    ("P013", "P001"),  # основной сквозной сценарий: неявка и повторный контакт
+    ("P001", "P002"),  # новый маршрут
+    ("P002", "P003"),  # требуется запись
+    ("P006", "P004"),  # отменённая запись
+    ("P019", "P005"),  # завершённый маршрут
+]
+
+
+def public_scenarios() -> list[dict]:
+    scenarios_by_code = {scenario["code"]: scenario for scenario in SCENARIOS}
+    return [{**scenarios_by_code[source_code], "code": public_code} for source_code, public_code in PUBLIC_SCENARIO_SOURCES]
+
 
 def aware_on(day: date, hour: int) -> datetime:
     return timezone.make_aware(datetime.combine(day, time(hour, 0)), ZoneInfo(settings.TIME_ZONE))
@@ -52,7 +65,8 @@ def seed_event(workspace: Workspace, route: Route, event_type: str, message: str
 
 
 @transaction.atomic
-def seed_workspace(workspace: Workspace) -> Workspace:
+def seed_workspace(workspace: Workspace, scenarios: list[dict] | None = None) -> Workspace:
+    selected_scenarios = SCENARIOS if scenarios is None else scenarios
     employees = {name: Employee.objects.create(workspace=workspace, full_name=name) for name in ["Мария Котова", "Ирина Смирнова", "Алексей Воронцов"]}
     services = [Service.objects.create(workspace=workspace, name=name) for name in ["Консультация по результатам", "Дополнительное исследование", "Повторный приём", "Контрольное исследование"]]
     facilities = [Facility.objects.create(workspace=workspace, name=name, address=address) for name, address in [("Центр на Лесной", "ул. Лесная, 14"), ("Клиника на Мира", "пр. Мира, 32"), ("Диагностический центр", "ул. Центральная, 8")]]
@@ -64,7 +78,7 @@ def seed_workspace(workspace: Workspace) -> Workspace:
             slot = ScheduleSlot.objects.create(workspace=workspace, service=service, specialist=specialists[index], facility=facilities[(offset + index) % 3], starts_at=aware_on(slot_day, 9 + index * 2))
             slots[(offset, index)] = slot
 
-    for position, scenario in enumerate(SCENARIOS):
+    for position, scenario in enumerate(selected_scenarios):
         birthday = date(workspace.demo_date.year - scenario["age"], ((position * 3) % 12) + 1, ((position * 7) % 27) + 1)
         patient = Patient.objects.create(workspace=workspace, code=scenario["code"], full_name=scenario["name"], birth_date=birthday)
         study = Study.objects.create(workspace=workspace, patient=patient, uid=f"DEMO-{scenario['code']}-STUDY", study_type="Демонстрационное исследование", study_date=workspace.demo_date - timedelta(days=14 + position), conclusion=scenario.get("conclusion", STANDARD_CONCLUSION))
@@ -112,7 +126,13 @@ def seed_workspace(workspace: Workspace) -> Workspace:
     return workspace
 
 
-def create_demo_workspace() -> Workspace:
+@transaction.atomic
+def create_demo_workspace(*, full_scenarios: bool = False) -> Workspace:
     now = timezone.now()
     workspace = Workspace.objects.create(name=f"Гостевое демо {now:%d.%m.%Y %H:%M}", kind=Workspace.Kind.DEMO, demo_date=timezone.localdate(), expires_at=now + timedelta(hours=settings.ROUTEGUARD_DEMO_TTL_HOURS))
-    return seed_workspace(workspace)
+    return seed_workspace(workspace, SCENARIOS if full_scenarios else public_scenarios())
+
+
+def create_qa_demo_workspace() -> Workspace:
+    """Create all synthetic scenarios for automated checks and developer QA."""
+    return create_demo_workspace(full_scenarios=True)
